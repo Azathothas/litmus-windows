@@ -4,19 +4,19 @@ Start here
 This is a Windows port of litmus (https://github.com/notroj/litmus).
 If you are picking this up cold, read these in order:
 
-  1. HANDOFF.md   where the current work stopped and what is next
-  2. README.md    what this fork is, how to build it, how to run it
-  3. AGENTS.md    how to use litmus to test a WebDAV server, and how to
+  1. README.md    what this fork is, how to build it, how to run it
+  2. AGENTS.md    how to use litmus to test a WebDAV server, and how to
                   read the results; also the JSON schema
-  4. PATCHES.md   what was changed inside neon/ and why, needed before
+  3. PATCHES.md   what was changed inside neon/ and why, needed before
                   you update the bundled neon
-  5. This file    what is left to do
+  4. This file    what is left to do
 
 Layout:
 
   src/            the test suites, one .c per suite, plus common.c,
-                  the suite registry (suites.h, litmus-cli.c) and the
-                  benchmark (bench.c)
+                  the suite registry (suites.h, litmus-cli.c), the
+                  benchmark (bench.c) and the harness self-test
+                  (selftest.c)
   neon/           vendored neon 0.37.1, checked in, not a submodule
   neon/test/common/tests.c
                   the shared harness: result formatting, counters,
@@ -26,7 +26,7 @@ Layout:
   VERSION         the fork version, read by both build paths
   tests/          test harnesses and expected results; see below
   Makefile.w32    the no-autotools build
-  .github/        CI: both build paths, self-test, release
+  .github/        CI: lint, both build paths, three gates, release
 
 Everything is one executable, litmus-cli, with the suite as a
 subcommand:
@@ -35,22 +35,29 @@ subcommand:
   litmus-cli locks --json http://host/dav/
   litmus-cli all http://host/dav/
   litmus-cli bench http://host/dav/
+  litmus-cli selftest
   litmus-cli list
 
 Test harnesses in tests/:
 
+  harness.sh      runs litmus-cli selftest in all three output modes
+                  and compares against tests/harness-expected.  No
+                  server, no network, under a second.  Run it first.
   wsgidav.sh      runs the suites against a local wsgidav; --check
                   compares against expected-wsgidav.txt.  This is the
                   gate: it must print "All suites match the expected
                   results" before and after every change.
-  godav.sh        runs them against golang.org/x/net/webdav instead.
-                  Needed because wsgidav cannot exercise the lock
-                  tests at all (see below).
+  godav.sh        runs them against golang.org/x/net/webdav instead;
+                  --check compares against expected-godav.txt.  Needed
+                  because wsgidav cannot exercise the lock tests at
+                  all (see below).
   capture.sh      captures every suite in every output mode, for the
                   byte-for-byte regression check
   compare-captures.sh
                   diffs two capture directories
-  hyperfine.sh    times litmus itself rather than the server
+  hyperfine.sh    times litmus itself rather than the server, against
+                  an empty main() as the control
+  python.sh       sourced by the two server harnesses to find a Python
   httpd.sh        upstream's Apache-in-a-container harness, Unix only
 
 Neither test server is complete, and the difference matters:
@@ -71,13 +78,14 @@ wsgidav.sh, and do not read either result as the whole picture.
 Before you change anything
 ==========================
 
-Run the baseline and note the numbers:
+Run the gates and note the numbers:
 
+  ./tests/harness.sh
   ./tests/wsgidav.sh --check
+  ./tests/godav.sh --check
 
-It must print "All suites match the expected results". If it does not,
-fix that before doing anything else. Everything below assumes a green
-baseline.
+All three must pass.  If they do not, fix that before doing anything
+else.  Everything below assumes a green baseline.
 
 Conventions, in code and in prose:
 
@@ -102,93 +110,44 @@ output must stay byte for byte identical. Prove it:
   make -f Makefile.w32 && ./tests/capture.sh /tmp/after
   ./tests/compare-captures.sh /tmp/before /tmp/after
 
-Two captures of the same build are byte for byte identical, so any
-difference is the change. Do not skip this. It is the only thing
-standing between this fork and silently breaking every script that
-parses litmus output.
+Do not skip this. It is the only thing standing between this fork and
+silently breaking every script that parses litmus output.
+
+One caveat, found the hard way: two captures of the same build are not
+always identical.  Against wsgidav on Windows, copymove occasionally
+sees a transient 403 or 412 from the server on a COPY or on the DELETE
+before it, which surfaces as copy_overwrite failing or copy_abspath
+warning.  Fifteen consecutive copymove runs against a dedicated server
+were identical, so this is the server's filesystem under load rather
+than anything in litmus.  If a diff is confined to copymove, capture a
+third time before believing it.  Everything else is deterministic.
 
 High value work
 ===============
 
-1. Docs are stale and must be rewritten
----------------------------------------
+Nothing.  The list that used to be here is done:
 
-README.md, AGENTS.md, PATCHES.md and NEWS still describe nine
-executables and do not mention litmus-cli, the bench subcommand, the
-new tests or the new options. This is the largest outstanding item and
-the one a user notices first.
-
-README.md is to be rewritten objectively and technically: keep what a
-user needs to build, install and run it, and cut the narrative, the
-history and the commentary about the fork's origins. It should say
-plainly that this suite covers more than the version it was forked
-from, without explaining why upstream does not have the extra tests and
-without editorialising about upstream at all.
-
-Download instructions must use one fixed URL that always points at the
-latest release, with no GitHub API calls, no jq and no grep pipelines:
-one curl, or one Invoke-WebRequest. That depends on item 2.
-
-2. CI and releases
-------------------
-
-* Add .github/dependabot.yml covering the actions.
-* Add a concurrency group so a newer run cancels the superseded one
-  when several commits land in quick succession.
-* Publish the executable individually as a release asset as well as
-  inside the zip, with an explicit tag_name and autogenerated notes.
-  Asset names must contain no version string, so a fixed "latest" URL
-  works. softprops/action-gh-release@v2 is fine for this; do not add
-  third-party actions where the gh CLI is just as good.
-* Releasing must fail loudly rather than overwrite an existing good
-  release.
-* The workflow still builds and uploads nine .exe files by name in
-  places; it needs to follow the single executable.
-* Gate the build on a lint job.
-* CI rebuilds the wsgidav virtualenv on every run. Caching it with
-  actions/cache would save about half a minute per job.
-
-3. Stable error classification in the JSON
-------------------------------------------
-
-`context` is a human-readable string today, so a consumer wanting to
-branch on the kind of failure has to pattern-match prose. Add a stable
-machine field alongside it: the operation that failed (PUT, GET, MKCOL,
-MOVE, DELETE, PROPFIND, LOCK), the HTTP status observed, and the path.
-Define the set of kinds once and treat it as part of the JSON contract.
-Keep `context` exactly as it is; this is an addition, not a
-replacement.
-
-4. Tests for the harness itself
--------------------------------
-
-There are no unit tests. Every check requires a live server, which is
-why the wsgidav and godav harnesses exist. The result accounting, the
-JSON emission, the escaping, the notrun bookkeeping and the error paths
-can all be tested without a network by substituting a fake transport
-that returns canned responses. This is the largest testability gap in
-the tree and it is what makes changes to tests.c risky enough to need
-the capture-and-diff ritual above.
-
-A synthetic suite exercising warnings, contexts and every status was
-used while building the JSON output and worked well. Make that a
-permanent, checked-in test rather than a throwaway.
-
-5. Optional chunked-upload suite
---------------------------------
-
-Several widely deployed DAV servers implement a chunked upload
-extension: MKCOL a per-transfer directory, PUT the parts into it under
-zero-padded numeric names, then MOVE a virtual assembly path onto the
-final destination. It is not in RFC 4918, so it must be opt-in and must
-not affect the default suite list or the expected results, but it is
-easy to implement wrongly and there is no convenient conformance test
-for it.
+  * The docs were rewritten for the single executable.
+  * CI gained a lint gate, a concurrency group, dependabot, caching,
+    the godav gate, and a release job that publishes the executable
+    under a fixed URL and refuses to overwrite a good release.
+  * The start-up floor was measured and left alone; see below.
+  * --json gained the "error" object.
+  * The harness gained a self-test that needs no server.
 
 Outstanding work
 ================
 
 Smaller maintenance items, in rough priority order.
+
+* neon's ne_lock() reports "Response missing activelock for %s" with
+  the token that is, by definition, missing, so it always prints
+  "(null)".  Passing NULL to %s is undefined behaviour; mingw and glibc
+  both happen to print "(null)".  The message would be far more useful
+  with the lock path in it.  Not fixed, because it is part of the
+  default text output that this fork promises not to change, and it is
+  upstream neon's message rather than litmus's.  Worth reporting to
+  neon.
 
 * The autotools build's remaining EXEEXT problem is fixed and the
   relink-every-run problem with it, but only for the one executable
@@ -203,26 +162,36 @@ Smaller maintenance items, in rough priority order.
   about to exit, so they are untidy rather than harmful. Cleaning them
   up properly means a cleanup path per test.
 
-* --trace does not cover the lockbomb worker threads or the benchmark
-  transfers. They create their own sessions rather than using
-  i_session, so the trace hooks are never attached. This is deliberate:
-  writing to one FILE from twenty threads would need locking, tracing
-  400,000 lock/unlock round trips would not be useful, and dumping the
-  benchmark's bodies would dominate the measurement it is trying to
-  make. Say so if anyone asks.
-
-* neon 0.37.1 speaks HTTP/1.1 only, so the "pin the protocol version"
-  escape hatch that a benchmark would want against servers which are
-  worse over HTTP/2 cannot be implemented here. It would need a
-  different HTTP client. Worth stating in the docs rather than leaving
-  as an open question.
-
 * Nothing reports which suites a server actually supports before
   running them, so `litmus-cli all' against a class 1 server spends its
   time skipping. Not important.
 
 Things that were looked at and deliberately not done
 ====================================================
+
+* Cutting the start-up floor.  Twenty runs each against a local Go
+  server: an empty main() built with the same compiler took 18.8 ms
+  +/- 3.1 ms, `litmus-cli list' 22.4 ms, `litmus-cli version' 23.8 ms,
+  the four-test http suite 27.3 ms, and the seventeen-test basic suite
+  39.4 ms.  Everything litmus does before its first byte of output
+  costs under 5 ms against a floor that belongs to Windows process
+  creation, and printing usage, printing the version and listing the
+  suites all measure the same to within a standard deviation, so there
+  is no code path to blame.  What is left is image size, paged in at
+  load.  tests/hyperfine.sh runs the control first so the comparison
+  is in front of you.
+
+* A chunked-upload suite.  Several widely deployed servers implement
+  the ownCloud/Nextcloud extension: MKCOL a per-transfer directory,
+  PUT the parts into it under zero-padded numeric names, then MOVE a
+  virtual assembly path onto the destination.  Not done, for two
+  reasons.  It is vendor-specific rather than RFC 4918, so the URL
+  layout is a property of the server and the suite would need
+  per-server configuration to be usable at all.  More decisively,
+  neither test server implements it, so the suite could not be
+  verified against anything -- and shipping an unverified suite is
+  exactly what the rest of this tree is set up to avoid.  It needs a
+  third test server first.
 
 * Merging the tolsen fork's tests wholesale, requested in upstream
   issue 8. It is 1643 lines with no shared history, stale by many
@@ -250,6 +219,19 @@ Things that were looked at and deliberately not done
   slowest tests are copy_coll and move_coll in copymove, at about two
   seconds each, and that time is the server copying a collection, not
   litmus. There is nothing to win on the client side.
+
+* Tracing the lockbomb worker threads and the benchmark transfers.
+  They create their own sessions rather than using i_session, so the
+  --trace hooks are never attached. This is deliberate: writing to one
+  FILE from twenty threads would need locking, tracing 400,000
+  lock/unlock round trips would not be useful, and dumping the
+  benchmark's bodies would dominate the measurement it is trying to
+  make. Said so in README.md and AGENTS.md.
+
+* Pinning the HTTP protocol version for the benchmark, which is what
+  you would want against a server that behaves differently over
+  HTTP/2. neon 0.37.1 speaks HTTP/1.1 only, so it cannot be done here;
+  it would need a different HTTP client. Said so in README.md.
 
 * Prefixing message bodies in the --trace output the way request and
   response headers are prefixed. Bodies are dumped by neon inside
