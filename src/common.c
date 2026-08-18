@@ -33,6 +33,11 @@
 
 #include <fcntl.h>
 #include <stdlib.h>
+#include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include <ne_uri.h>
 #include <ne_auth.h>
@@ -58,6 +63,13 @@ ne_sock_addr *i_address;
 
 int litmus_threads = LITMUS_THREADS_DEFAULT;
 
+/* Connection settings, reported by the benchmark because two runs made
+ * with different ones are not comparable.  Zero means "leave neon's
+ * default alone". */
+int litmus_connect_timeout = 0;
+int litmus_read_timeout = 0;
+int litmus_persist = 1;
+
 static int use_tls, tls_trust_everything;
 
 const char *i_username = NULL, *i_password;
@@ -78,7 +90,22 @@ static int trace_needs_close;
 
 /* Option codes for the long-only options. */
 enum {
-    OPT_THREADS = 256
+    OPT_THREADS = 256,
+    OPT_FILES,
+    OPT_SIZE,
+    OPT_LARGE,
+    OPT_CONCURRENCY,
+    OPT_PINGS,
+    OPT_CONNECT_TIMEOUT,
+    OPT_READ_TIMEOUT,
+    OPT_NO_KEEPALIVE
+};
+
+/* Filled in by litmus_init() from the bench options below; only the
+ * bench subcommand reads it. */
+struct litmus_bench_options litmus_bench_options = {
+    LITMUS_BENCH_FILES, LITMUS_BENCH_SIZE, LITMUS_BENCH_LARGE,
+    LITMUS_BENCH_CONCURRENCY, LITMUS_BENCH_PINGS, 0, 0, 1
 };
 
 static const struct option longopts[] = {
@@ -96,6 +123,14 @@ static const struct option longopts[] = {
     { "verbose", no_argument, NULL, 'v' },
     { "trace", optional_argument, NULL, 't' },
     { "threads", required_argument, NULL, OPT_THREADS },
+    { "files", required_argument, NULL, OPT_FILES },
+    { "size", required_argument, NULL, OPT_SIZE },
+    { "large", required_argument, NULL, OPT_LARGE },
+    { "concurrency", required_argument, NULL, OPT_CONCURRENCY },
+    { "pings", required_argument, NULL, OPT_PINGS },
+    { "connect-timeout", required_argument, NULL, OPT_CONNECT_TIMEOUT },
+    { "read-timeout", required_argument, NULL, OPT_READ_TIMEOUT },
+    { "no-keepalive", no_argument, NULL, OPT_NO_KEEPALIVE },
     { NULL }
 };
 
@@ -112,7 +147,17 @@ static const struct option longopts[] = {
 " -v, --verbose              write the protocol trace to stderr\n"        \
 " -t, --trace[=FILE]         dump every request and response to FILE\n"   \
 "                            (default stderr; use - for stdout)\n"       \
-"     --threads=N            number of worker threads (lockbomb only)\n"
+"     --threads=N            number of worker threads (lockbomb only)\n"  \
+"     --connect-timeout=SEC  connection timeout\n"                        \
+"     --read-timeout=SEC     response timeout\n"                          \
+"     --no-keepalive         one connection per request\n"                \
+"\n"                                                                      \
+"bench only:\n"                                                           \
+"     --files=N              small files to transfer\n"                   \
+"     --size=BYTES           size of each small file\n"                   \
+"     --large=BYTES          size of the large file, 0 to skip it\n"      \
+"     --concurrency=N        transfers in flight at once\n"               \
+"     --pings=N              TCP connect probes, 0 to skip them\n"
 
 static void usage(FILE *output)
 {
@@ -207,6 +252,8 @@ void litmus_reset(void)
     system_proxy = 0;
     clicert_fn = clicert_uri = NULL;
     litmus_threads = LITMUS_THREADS_DEFAULT;
+    litmus_connect_timeout = litmus_read_timeout = 0;
+    litmus_persist = 1;
 
     /* trace_fp deliberately survives: a run of several suites writes
      * one dump, closed by litmus_cleanup(). */
@@ -264,10 +311,26 @@ static int open_trace(const char *fname)
     return 0;
 }
 
+/* Parses the current option's argument as a number in [lo, hi],
+ * reporting a usage error if it is not one.  A macro because every use
+ * bails out of litmus_init() the same way. */
+#define CALL_NUMBER(name, lo, hi) do {                                  \
+    char *_end;                                                         \
+                                                                        \
+    number = strtoll(optarg, &_end, 10);                                \
+    if (*optarg == '\0' || *_end != '\0'                                \
+        || number < (long long)(lo) || number > (long long)(hi)) {      \
+        fprintf(stderr, "%s: %s must be between %lld and %lld\n",       \
+                test_argv[0], name, (long long)(lo), (long long)(hi));  \
+        return TEST_INIT_USAGE;                                         \
+    }                                                                   \
+} while (0)
+
 int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
 {
     ne_uri proxy = {0}, *server = &i_origin;
     int optc, n;
+    long long number;
     char *proxy_url = NULL;
 
     while ((optc = getopt_long(argc, test_argv,
@@ -288,19 +351,41 @@ int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
         case 'u':
             clicert_uri = optarg;
             break;
-        case OPT_THREADS: {
-            char *end;
-            long value = strtol(optarg, &end, 10);
-
-            if (*optarg == '\0' || *end != '\0'
-                || value < 1 || value > LITMUS_THREADS_MAX) {
-                fprintf(stderr, "%s: --threads must be between 1 and %d\n",
-                        test_argv[0], LITMUS_THREADS_MAX);
-                return TEST_INIT_USAGE;
-            }
-            litmus_threads = (int)value;
+        case OPT_THREADS:
+            CALL_NUMBER("--threads", 1, LITMUS_THREADS_MAX);
+            litmus_threads = (int)number;
             break;
-        }
+        case OPT_FILES:
+            CALL_NUMBER("--files", 0, LITMUS_BENCH_MAX_FILES);
+            litmus_bench_options.files = (unsigned)number;
+            break;
+        case OPT_SIZE:
+            CALL_NUMBER("--size", 0, LITMUS_BENCH_MAX_BYTES);
+            litmus_bench_options.size = (ne_off_t)number;
+            break;
+        case OPT_LARGE:
+            CALL_NUMBER("--large", 0, LITMUS_BENCH_MAX_BYTES);
+            litmus_bench_options.large = (ne_off_t)number;
+            break;
+        case OPT_CONCURRENCY:
+            CALL_NUMBER("--concurrency", 1, LITMUS_BENCH_MAX_CONCURRENCY);
+            litmus_bench_options.concurrency = (unsigned)number;
+            break;
+        case OPT_PINGS:
+            CALL_NUMBER("--pings", 0, LITMUS_BENCH_MAX_PINGS);
+            litmus_bench_options.pings = (unsigned)number;
+            break;
+        case OPT_CONNECT_TIMEOUT:
+            CALL_NUMBER("--connect-timeout", 0, 86400);
+            litmus_connect_timeout = (int)number;
+            break;
+        case OPT_READ_TIMEOUT:
+            CALL_NUMBER("--read-timeout", 0, 86400);
+            litmus_read_timeout = (int)number;
+            break;
+        case OPT_NO_KEEPALIVE:
+            litmus_persist = 0;
+            break;
 	case 'd':
             t_warning("the 'htdocs' argument is now ignored");
 	    break;
@@ -416,12 +501,19 @@ static int auth(void *ud, const char *realm, int attempt,
     return attempt;
 }
 
+/* The name of the test issuing the current request.  The benchmark
+ * runs outside the harness, so there is no test array then. */
+static const char *current_test(void)
+{
+    return tests ? tests[test_num].name : test_suite;
+}
+
 static void i_pre_send(ne_request *req, void *userdata, ne_buffer *hdr)
 {
     const char *name = userdata;
 
     ne_buffer_snprintf(hdr, BUFSIZ, "%s: %s: %d (%s)\r\n",
-                       name, test_suite, test_num, tests[test_num].name);
+                       name, test_suite, test_num, current_test());
 }
 
 /* Writes 'text' with every line prefixed by 'prefix', so that a request
@@ -451,7 +543,7 @@ static void trace_pre_send(ne_request *req, void *userdata, ne_buffer *hdr)
     const char *label = userdata;
 
     fprintf(trace_fp, "\n--- %s %d (%s)%s ---\n", test_suite, test_num,
-            tests[test_num].name, label);
+            current_test(), label);
     trace_block(">", hdr->data);
     fflush(trace_fp);
 }
@@ -569,6 +661,54 @@ static int make_space(void)
     i_path = space;    
 
     return OK;
+}
+
+ne_session *litmus_new_session(void)
+{
+    const ne_uri *u = &i_origin;
+    ne_session *sess;
+
+    if (u->scheme == NULL || u->host == NULL) return NULL;
+
+    sess = ne_session_create(u->scheme, u->host, u->port);
+    if (sess == NULL) return NULL;
+
+    if (init_session(sess) != OK) {
+        ne_session_destroy(sess);
+        return NULL;
+    }
+
+    if (litmus_connect_timeout > 0)
+        ne_set_connect_timeout(sess, litmus_connect_timeout);
+    if (litmus_read_timeout > 0)
+        ne_set_read_timeout(sess, litmus_read_timeout);
+    if (!litmus_persist)
+        ne_set_session_flag(sess, NE_SESSFLAG_PERSIST, 0);
+
+    return sess;
+}
+
+const char *litmus_target_host(void)
+{
+    return proxy_hostname ? proxy_hostname : i_hostname;
+}
+
+unsigned int litmus_target_port(void)
+{
+    return proxy_hostname ? proxy_port : i_port;
+}
+
+void litmus_sleep_ms(unsigned ms)
+{
+#ifdef _WIN32
+    Sleep(ms);
+#else
+    struct timespec ts;
+
+    ts.tv_sec = ms / 1000;
+    ts.tv_nsec = (long)(ms % 1000) * 1000000L;
+    nanosleep(&ts, NULL);
+#endif
 }
 
 int begin(void)

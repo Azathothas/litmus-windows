@@ -27,6 +27,7 @@
 #include <ne_socket.h> /* for ne_sock_addr */
 
 #include "tests.h"
+#include "bench.h"
 
 /* The fork's version, defined on the command line by both build paths
  * from the VERSION file at the top of the tree.  PACKAGE_VERSION is
@@ -49,6 +50,31 @@
 
 /* Number of worker threads to use, set by --threads. */
 extern int litmus_threads;
+
+/* Connection settings.  Zero for either timeout leaves neon's own
+ * default in place; litmus_persist controls keep-alive.  They matter
+ * for bulk transfer, so the benchmark sets and reports them. */
+extern int litmus_connect_timeout;
+extern int litmus_read_timeout;
+extern int litmus_persist;
+
+/* Creates an additional session to the same origin, configured the way
+ * i_session is: proxy, authentication, TLS and the connection settings
+ * above.  Returns NULL on failure.  The caller destroys it.  Each
+ * thread needs its own; a neon session cannot be shared. */
+ne_session *litmus_new_session(void);
+
+/* The host and port litmus actually connects to: the proxy when one is
+ * configured, otherwise the origin. */
+const char *litmus_target_host(void);
+unsigned int litmus_target_port(void);
+
+/* Sleeps for 'ms' milliseconds. */
+void litmus_sleep_ms(unsigned ms);
+
+/* Benchmark settings, filled in by litmus_init() from the command
+ * line; only the bench subcommand reads them. */
+extern struct litmus_bench_options litmus_bench_options;
 
 /* Returns the state owned by this file to its initial values, so that
  * one process can run several suites in turn. */

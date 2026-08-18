@@ -114,6 +114,19 @@ extern const char *test_target;
  * there too and the two stay interleaved in the right order. */
 extern FILE *test_trace_fp;
 
+/* Seconds since an arbitrary fixed point, or 0.0 if the clock could
+ * not be read.  Only differences between two calls are meaningful. */
+double test_now_seconds(void);
+
+/* Writes the current time into 'buf' as an ISO 8601 UTC timestamp with
+ * millisecond precision, e.g. 2026-08-18T12:09:12.345Z.  Sub-second
+ * digits are truncated, not rounded, so the stamp never names a moment
+ * that had not happened yet.  Returns 0 and empties 'buf' on failure. */
+int test_now_iso8601(char *buf, size_t buflen);
+
+/* Writes 'str' to stdout as a quoted JSON string. */
+void test_json_string(const char *str);
+
 /* Provide result context message. */
 void t_context(const char *ctx, ...)
 #ifdef __GNUC__

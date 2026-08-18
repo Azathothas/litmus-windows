@@ -120,6 +120,43 @@ static void list_suites(void)
  * pointer in test_argv for as long as it runs. */
 static char *cmdname;
 
+/* Sets up a session the way a suite would and runs the benchmark.  It
+ * is not a suite: nothing here passes or fails, so it does not go
+ * through the harness. */
+static int run_bench(const char *argv0, int argc, char **argv)
+{
+    int use_colour = 0, quiet = 0, ret;
+
+    litmus_reset();
+
+    if (cmdname) ne_free(cmdname);
+    cmdname = ne_concat(argv0, " bench", NULL);
+    argv[0] = cmdname;
+
+    test_suite = "bench";
+    test_argc = argc;
+    test_argv = argv;
+
+    ret = litmus_init(argc, (const char *const *)argv, &use_colour, &quiet);
+    if (ret == TEST_INIT_DONE) return 0;
+    if (ret == TEST_INIT_USAGE) return 1;
+    if (ret != OK) {
+        fprintf(stderr, "%s: %s\n", cmdname, test_context);
+        return 1;
+    }
+
+    if (begin() != OK) {
+        fprintf(stderr, "%s: %s\n", cmdname, test_context);
+        return 1;
+    }
+
+    ret = litmus_bench(&litmus_bench_options);
+
+    finish();
+
+    return ret;
+}
+
 /* Runs one suite, giving it 'argc'/'argv' as its own command line. */
 static int dispatch(const struct litmus_suite *suite, const char *argv0,
                     int argc, char **argv)
@@ -175,7 +212,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (strcmp(cmd, "all") == 0) {
+    if (strcmp(cmd, "bench") == 0) {
+        ret = run_bench(argv[0], argc - 1, argv + 1);
+        litmus_cleanup();
+    }
+    else if (strcmp(cmd, "all") == 0) {
         int failures = 0, fatal = 0;
 
         for (suite = litmus_suites; suite->name; suite++) {

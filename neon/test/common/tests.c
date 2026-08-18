@@ -119,7 +119,7 @@ static void print_prefix(int n);
 #define TPUTCHAR(c) do { if (!test_json) putchar(c); } while (0)
 
 /* Seconds since an arbitrary fixed point, or 0.0 if unavailable. */
-static double now_seconds(void)
+double test_now_seconds(void)
 {
 #if defined(HAVE_GETTIMEOFDAY) && defined(HAVE_SYS_TIME_H)
     struct timeval tv;
@@ -133,7 +133,7 @@ static double now_seconds(void)
 /* Writes the current time into 'buf' as an ISO 8601 UTC timestamp with
  * millisecond precision, e.g. 2026-08-18T12:09:12.345Z.  Returns 0 if
  * the time could not be determined, leaving 'buf' empty. */
-static int now_iso8601(char *buf, size_t buflen)
+int test_now_iso8601(char *buf, size_t buflen)
 {
 #if defined(HAVE_GETTIMEOFDAY) && defined(HAVE_SYS_TIME_H)
     struct timeval tv;
@@ -165,7 +165,7 @@ fail:
 }
 
 /* Writes 'str' to stdout as a quoted JSON string. */
-static void json_string(const char *str)
+void test_json_string(const char *str)
 {
     putchar('"');
     for (; str && *str; str++) {
@@ -235,14 +235,14 @@ static void emit_json(double duration)
     int i;
 
     printf("{\"suite\":");
-    json_string(test_suite);
+    test_json_string(test_suite);
     if (test_target) {
         printf(",\"target\":");
-        json_string(test_target);
+        test_json_string(test_target);
     }
     if (run_started_iso[0]) {
         printf(",\"started\":");
-        json_string(run_started_iso);
+        test_json_string(run_started_iso);
     }
     printf(",\"duration\":%.3f,\"tests\":[", duration);
 
@@ -252,14 +252,14 @@ static void emit_json(double duration)
 
         if (i) putchar(',');
         printf("{\"name\":");
-        json_string((rec && rec->name) ? rec->name : tests[i].name);
+        test_json_string((rec && rec->name) ? rec->name : tests[i].name);
         printf(",\"status\":");
-        json_string(status);
+        test_json_string(status);
         printf(",\"duration\":%.3f", rec ? rec->duration : 0.0);
 
         if (rec && rec->context) {
             printf(",\"context\":");
-            json_string(rec->context);
+            test_json_string(rec->context);
         }
         if (rec && rec->nwarns) {
             unsigned w;
@@ -267,7 +267,7 @@ static void emit_json(double duration)
             printf(",\"warnings\":[");
             for (w = 0; w < rec->nwarns; w++) {
                 if (w) putchar(',');
-                json_string(rec->warns[w]);
+                test_json_string(rec->warns[w]);
             }
             putchar(']');
         }
@@ -573,9 +573,9 @@ int run_suite(const char *name, ne_test *suite, int argc, char *argv[])
     if (test_json && count > 0)
         records = ne_calloc(count * sizeof(*records));
 
-    run_started = now_seconds();
+    run_started = test_now_seconds();
     if (test_json)
-        now_iso8601(run_started_iso, sizeof run_started_iso);
+        test_now_iso8601(run_started_iso, sizeof run_started_iso);
 
     for (n = 0; !aborted && tests[n].fn != NULL; n++) {
 	int result, is_xfail = 0;
@@ -597,9 +597,9 @@ int run_suite(const char *name, ne_test *suite, int argc, char *argv[])
 		 n, test_name);
 
 	/* run the test. */
-        started = now_seconds();
+        started = test_now_seconds();
 	result = tests[n].fn();
-        elapsed = now_seconds() - started;
+        elapsed = test_now_seconds() - started;
 
 #ifdef NEON_MEMLEAK
         /* issue warnings for memory leaks, if requested */
@@ -718,7 +718,7 @@ int run_suite(const char *name, ne_test *suite, int argc, char *argv[])
     }
 
     if (test_json) {
-        emit_json(now_seconds() - run_started);
+        emit_json(test_now_seconds() - run_started);
     }
 
     /* discount skipped tests */

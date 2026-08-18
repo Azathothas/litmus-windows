@@ -71,13 +71,15 @@ NEON_OBJS = \
 
 TEST_OBJS = src/common.o neon/test/common/tests.o
 
-HDRS = src/common.h src/suites.h neon/test/common/tests.h win32/config.h
+HDRS = src/common.h src/suites.h src/bench.h \
+       neon/test/common/tests.h win32/config.h
 
 # One executable holds every suite; the suites differ only in which
 # ne_test array they register.
 SUITES = basic copymove props locks http largefile protected lockbomb
 
-CLI_OBJS = src/litmus-cli.o $(addprefix src/,$(addsuffix .o,$(SUITES)))
+CLI_OBJS = src/litmus-cli.o src/bench.o \
+	   $(addprefix src/,$(addsuffix .o,$(SUITES)))
 
 PROGS = litmus-cli.exe
 
@@ -103,9 +105,12 @@ $(NEON_OBJS): win32/config.h
 $(TEST_OBJS): $(HDRS)
 $(CLI_OBJS): $(HDRS)
 
-# lockbomb runs its workers as threads, so the whole executable is
-# linked -pthread.
+# lockbomb and bench run their workers as threads, so the whole
+# executable is linked -pthread.
 src/lockbomb.o: src/lockbomb.c $(HDRS)
+	$(COMPILE) -pthread -c $< -o $@
+
+src/bench.o: src/bench.c $(HDRS)
 	$(COMPILE) -pthread -c $< -o $@
 
 litmus-cli.exe: $(CLI_OBJS) libtest.a libneon.a

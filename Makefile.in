@@ -34,11 +34,12 @@ EXEEXT = @EXEEXT@
 TEST_COMMON = @TEST_COMMON@
 LIBOBJS = @LIBOBJS@
 TESTOBJS = src/common.o $(TEST_COMMON)/tests.o
-HDRS = src/common.h src/suites.h $(TEST_COMMON)/tests.h config.h
+HDRS = src/common.h src/suites.h src/bench.h $(TEST_COMMON)/tests.h config.h
 
 # Every suite is linked into one executable and selected by subcommand.
-CLI_OBJS = src/litmus-cli.o src/basic.o src/copymove.o src/props.o \
-	src/locks.o src/http.o src/largefile.o src/protected.o src/lockbomb.o
+CLI_OBJS = src/litmus-cli.o src/bench.o src/basic.o src/copymove.o \
+	src/props.o src/locks.o src/http.o src/largefile.o \
+	src/protected.o src/lockbomb.o
 PROGRAM = litmus-cli$(EXEEXT)
 
 TESTS = @TESTS@
@@ -130,4 +131,7 @@ src/http.o: src/http.c $(HDRS)
 src/largefile.o: src/largefile.c $(HDRS)
 src/protected.o: src/protected.c $(HDRS)
 src/lockbomb.o: src/lockbomb.c $(HDRS)
+	$(PTHREAD_CC) $(CPPFLAGS) $(PTHREAD_CFLAGS) $(CFLAGS) -c $< -o $@
+
+src/bench.o: src/bench.c $(HDRS)
 	$(PTHREAD_CC) $(CPPFLAGS) $(PTHREAD_CFLAGS) $(CFLAGS) -c $< -o $@
