@@ -583,7 +583,7 @@ static int unmapped_lock(void)
     return OK;
 }
 
-ne_test tests[] = {
+ne_test locks_tests[] = {
     INIT_TESTS,
 
     /* check server is class 2. */

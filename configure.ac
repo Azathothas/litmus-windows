@@ -1,6 +1,9 @@
 dnl autoconf script for litmus
 
-AC_INIT([litmus],[0.18],[],[],[https://github.com/notroj/litmus])
+dnl The version lives in the VERSION file, which Makefile.w32 reads as
+dnl well, so the two build paths cannot report different numbers.
+AC_INIT([litmus],[m4_esyscmd_s([cat VERSION])],[],
+        [],[https://github.com/Azathothas/litmus-windows])
 
 AC_PREREQ([2.59])
 
@@ -46,8 +49,11 @@ AC_DEFINE([HAVE_PTHREADS], 1, [Define if pthreads are supported])
 AC_SUBST(THREADS_TEST)
 
 # Define NEON_TEST_INIT so that litmus_init() is used as test
-# framework initializer in all builds.
+# framework initializer in all builds.  LITMUS_VERSION is what
+# --version and the User-Agent report; it comes from the same VERSION
+# file that Makefile.w32 reads.
 CPPFLAGS="$CPPFLAGS -I\${top_builddir} -DNEON_TEST_INIT=litmus_init"
+CPPFLAGS="$CPPFLAGS -DLITMUS_VERSION='\"AC_PACKAGE_VERSION\"'"
 
 dnl The test-common symlink is checked out as a plain file on platforms
 dnl without symlink support (e.g. Windows), so fall back to the real

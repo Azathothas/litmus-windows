@@ -41,31 +41,32 @@
 #include "common.h"
 
 #define ITERS 20000
-#ifndef THREADS
-#define THREADS (20)
-#endif
+
 
 struct thrarg {
-#if defined(HAVE_PTHREADS) && (THREADS > 1)
+#if defined(HAVE_PTHREADS)
     pthread_t thd;
 #endif
     ne_uri uri;
 };
-    
+
+/* Returns NULL on success, or a message the caller must ne_free().
+ * Every exit runs through the bottom of the function so that the
+ * session is always destroyed. */
 static void *threadfn(void *varg)
 {
     struct thrarg *arg = varg;
     ne_session *sess;
     unsigned int iter;
-    char *tmp;
-    int put_ret;
+    char *tmp, *err = NULL;
     int fd = litmus_tmpfile(&tmp);
-    
-    if (fd < 0) return "could not create temporary file";
-    
+
+    if (fd < 0) return ne_strdup("could not create temporary file");
+
     sess = ne_session_create(i_origin.scheme, i_origin.host, i_origin.port);
 
-    put_ret = ne_put(sess, arg->uri.path, fd);
+    if (ne_put(sess, arg->uri.path, fd) != NE_OK)
+        err = ne_concat("PUT: ", ne_get_error(sess), NULL);
 
     /* The temporary file is only needed for the PUT above.  Clean it up
      * whether or not that succeeded, otherwise a run against a server
@@ -74,89 +75,121 @@ static void *threadfn(void *varg)
     unlink(tmp);
     ne_free(tmp);
 
-    if (put_ret != NE_OK)
-        return ne_concat("PUT: ", ne_get_error(sess), NULL);
-
-
-    for (iter = 0; iter < ITERS; iter++) {
+    for (iter = 0; err == NULL && iter < ITERS; iter++) {
         struct ne_lock *lock = ne_lock_create();
-        int ret;
-        
+
         memcpy(&lock->uri, &arg->uri, sizeof lock->uri);
-        
-        ret = ne_lock(sess, lock);
-        if (ret != NE_OK) {
-            return ne_concat("LOCK failure: ", ne_get_error(sess), NULL);
-        }
-        
-        ret = ne_unlock(sess, lock);
-        if (ret != NE_OK) {
-            return ne_concat("UNLOCK failure: ", ne_get_error(sess), NULL);
-        }
+
+        if (ne_lock(sess, lock) != NE_OK)
+            err = ne_concat("LOCK failure: ", ne_get_error(sess), NULL);
+        else if (ne_unlock(sess, lock) != NE_OK)
+            err = ne_concat("UNLOCK failure: ", ne_get_error(sess), NULL);
 
         memset(&lock->uri, 0, sizeof lock->uri);
         ne_lock_destroy(lock);
     }
 
-    ne_session_destroy(sess);    
-    
-    return NULL;
+    ne_session_destroy(sess);
+
+    return err;
 }
 
-#if THREADS > 1
-#define T_name "lockbomb_threaded"
-static int lockbomb(void)
+/* One worker in this process, driving one resource. */
+static int lockbomb_single(void)
 {
-    struct thrarg args[THREADS];
-    unsigned n;
-    int ret;
+    struct thrarg arg;
+    char *retval;
 
-    for (n = 0; n < THREADS; n++) {
+    arg.uri = i_origin;
+    arg.uri.path = ne_concat(i_origin.path, "lb-lock-single", NULL);
+
+    retval = threadfn(&arg);
+    ne_free(arg.uri.path);
+
+    if (retval) {
+        t_context("iteration failed: %s", retval);
+        ne_free(retval);
+        return FAIL;
+    }
+
+    return OK;
+}
+
+/* litmus_threads workers, each driving its own resource. */
+static int lockbomb_threaded(void)
+{
+#if defined(HAVE_PTHREADS)
+    struct thrarg *args;
+    unsigned nthreads = (unsigned)litmus_threads, n, started;
+    int ret, result = OK;
+
+    args = ne_calloc(nthreads * sizeof(*args));
+
+    for (started = 0; started < nthreads; started++) {
         char *path = ne_malloc(256);
-        
-        ne_snprintf(path, 256, "%s/lb-lock-%04u", i_origin.path, n);
 
-        memcpy(&args[n].uri, &i_origin, sizeof i_origin);
-        args[n].uri.path = path;
+        ne_snprintf(path, 256, "%s/lb-lock-%04u", i_origin.path, started);
 
-        ret = pthread_create(&args[n].thd, NULL, threadfn, &args[n]);
-        ONV(ret, ("pthread_create failed: %s", strerror(ret)));
+        memcpy(&args[started].uri, &i_origin, sizeof i_origin);
+        args[started].uri.path = path;
+
+        ret = pthread_create(&args[started].thd, NULL, threadfn,
+                             &args[started]);
+        if (ret) {
+            /* Leave the threads already running to be joined below,
+             * rather than returning while they still write to args. */
+            t_context("pthread_create failed: %s", strerror(ret));
+            ne_free(path);
+            result = FAIL;
+            break;
+        }
     }
 
     NE_DEBUG(NE_DBG_HTTP, "lockbomb: spawned %u threads, now waiting...\n",
-             (unsigned int)THREADS);
+             started);
 
-    for (n = 0; n < THREADS; n++) {
-        const char *retval;
+    for (n = 0; n < started; n++) {
+        char *retval = NULL;
 
         ret = pthread_join(args[n].thd, (void **)&retval);
-        ONV(ret, ("pthread_join failed: %s", strerror(ret)));
-        ONV(retval, ("thread failed: %s", retval));
-   }
-    
-    return OK;
+        if (ret) {
+            if (result == OK) {
+                t_context("pthread_join failed: %s", strerror(ret));
+                result = FAIL;
+            }
+        }
+        else if (retval) {
+            if (result == OK) {
+                t_context("thread failed: %s", retval);
+                result = FAIL;
+            }
+            ne_free(retval);
+        }
+        ne_free(args[n].uri.path);
+    }
+
+    ne_free(args);
+
+    return result;
+#else
+    t_context("no pthreads support in this build; use --threads=1");
+    return SKIP;
+#endif
 }
 
-#else /* !HAVE_PTHREADS */
-
-#define T_name "lockbomb_single"
 static int lockbomb(void)
 {
-    struct thrarg args[THREADS];
-    const char *retval;
-
-    args[0].uri = i_origin;
-    args[0].uri.path = ne_concat(i_origin.path, "lb-lock-single", NULL);
-    
-    retval = threadfn(&args[0]);
-    ONV(retval, ("iteration failed: %s", retval));
-    return OK;
+    return litmus_threads > 1 ? lockbomb_threaded() : lockbomb_single();
 }
 
-#endif
-
-ne_test tests[] = {
+ne_test lockbomb_tests[] = {
     INIT_TESTS,
-    T_NAMED(lockbomb, T_name),
+    T_NAMED(lockbomb, "lockbomb_threaded"),
+    FINISH_TESTS
+};
+
+ne_test lockbomb_single_tests[] = {
+    INIT_TESTS,
+    T_NAMED(lockbomb, "lockbomb_single"),
     FINISH_TESTS
 };

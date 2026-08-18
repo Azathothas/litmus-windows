@@ -36,6 +36,21 @@ It must print "All suites match the expected results". If it does not,
 fix that before doing anything else. Everything below assumes a green
 baseline.
 
+Conventions, in code and in prose:
+
+  * Binary units, always: KiB, MiB, GiB, powers of 1024. Never KB, MB
+    or GB for a quantity of bytes, and never a decimal power of ten.
+    Rates are MiB/s.
+  * Timestamps are ISO 8601 in UTC with millisecond precision and a
+    trailing Z, e.g. 2026-08-18T13:04:54.429Z. Truncate sub-second
+    digits, do not round, so a stamp never names a moment that had not
+    happened yet.
+  * Durations are seconds to millisecond resolution, and are
+    wall-clock. Say so when reporting them, because they include server
+    and network time.
+  * Quote exact byte counts where the exact figure matters, with the
+    rounded binary figure in brackets after it.
+
 If you touch neon/test/common/tests.c or src/common.c, the default text
 output must stay byte for byte identical. The way to prove that is to
 build the tree twice, once with your change and once without, and diff
@@ -43,10 +58,178 @@ the output of every suite in both default and --quiet mode against the
 same server. Do not skip this. It is the only thing standing between
 this fork and silently breaking every script that parses litmus output.
 
+High value work
+===============
+
+These are the things worth doing next, roughly in order of value. They
+are bigger than the maintenance items further down.
+
+1. One CLI instead of nine executables
+--------------------------------------
+
+Today every suite is its own program: basic.exe, copymove.exe, props.exe
+and so on, nine in total, each around 7.9 MiB when statically linked.
+That is 71 MiB unpacked, 26 MiB zipped, for what is really one tool, and
+means a user has to know which executable to reach for. Almost all of
+that is nine copies of the same statically linked OpenSSL, expat and
+neon.
+
+Replace them with a single `litmus-cli` taking the suite as a
+subcommand:
+
+    litmus-cli basic http://host/dav/
+    litmus-cli locks --json http://host/dav/
+    litmus-cli list                       # what suites exist
+    litmus-cli all --json http://host/dav/
+
+How the code is shaped now, and what has to change:
+
+* Each src/<suite>.c defines its own `ne_test tests[]` and relies on
+  the harness in neon/test/common/tests.c providing `main()`. Two
+  suites cannot be linked into one binary, because `tests` and `main`
+  would collide.
+* The fix is to rename each suite's array to `<suite>_tests` (a macro
+  per translation unit keeps the diff small), build a registry mapping
+  name to array, and turn the harness `main()` into a callable
+  `run_suite(const char *name, ne_test *tests, int argc, char **argv)`.
+* The harness has file-scope state (`passes`, `fails`, `skipped`,
+  `warnings`, `count`, `aborted`, `records`, `nrecords`). Running more
+  than one suite in a process means resetting all of it between runs.
+  Miss one and `litmus-cli all` reports nonsense on the second suite.
+  Reset in one function, next to the declarations, not scattered.
+* `litmus_init()` in src/common.c calls `exit()` on a bad command line.
+  That is fine for one-shot programs and wrong for a dispatcher.
+* src/lockbomb.c is compiled twice with different flags to produce
+  lockbomb and lockbomb-single. As subcommands that becomes one
+  registration plus a `--threads` option.
+
+Keep single-suite behaviour identical. The regression rule at the top
+of this file applies with full force here: same text output, same exit
+status (number of failures), same JSON. Prove it by diffing the output
+of every suite before and after, in default and --quiet mode, against
+the same server. Consider keeping the old executable names as thin
+wrappers, or at least document the mapping, so existing scripts do not
+break silently.
+
+2. Throughput and latency measurement
+-------------------------------------
+
+litmus answers "is this server correct". It cannot answer "is this
+server fast", which is the other question every server author has. A
+`bench` subcommand would close that gap, and most of the machinery
+(sessions, auth, cleanup) already exists.
+
+Scenarios worth having:
+
+* Many small files uploaded in parallel, bounded concurrency.
+* The same set downloaded in parallel.
+* One large file up, then down.
+* Report per scenario: file count, total bytes, wall-clock duration,
+  MiB/s, and errors collected but not fatal, so one failed transfer
+  does not discard the whole measurement.
+
+Two implementation details that are easy to get wrong and will silently
+produce meaningless numbers:
+
+* **Do not upload zeros or a repeating pattern.** Servers, proxies and
+  filesystems in the path may compress, deduplicate or sparse-allocate
+  it, and the measured rate becomes fiction. Generate one buffer of
+  random bytes once, a few MiB, and stream from it at a rotating
+  offset. Calling the CSPRNG per read is far too slow to measure a
+  network with; repeating a single small block is compressible. Give
+  each parallel stream its own starting offset so concurrent uploads
+  are not byte-identical.
+* **Bound concurrency explicitly**, with a counting semaphore, and make
+  the limit an option. Unbounded parallelism measures the client's
+  scheduler, not the server.
+
+Latency deserves its own probe, and does not need raw sockets or
+administrator rights: connect a TCP socket to the target host and port
+N times, timing each, then report min, max, mean, jitter as the mean
+absolute deviation from the mean, and loss as failed over attempted.
+Pause briefly between attempts so it does not look like a flood. This
+matters because it lets an author separate network round-trip time from
+server processing time, which is otherwise guesswork when a suite looks
+slow.
+
+`hyperfine` is on this machine and is the right tool for measuring the
+harness itself, as opposed to the server.
+
+3. Connection and timeout tuning should be visible
+--------------------------------------------------
+
+Bulk transfer performance depends on settings that are currently
+implicit: idle connection count and lifetime, per-host connection
+limits, TLS handshake timeout, response header timeout, the
+expect-continue wait, and whether keep-alive is on. neon already reuses
+connections well (a props run is 36 requests over one connection), but
+a benchmark mode needs these to be deliberate and reportable, otherwise
+two runs are not comparable.
+
+Also worth an escape hatch: some servers are markedly worse over HTTP/2
+for bulk transfer than over HTTP/1.1. Being able to pin the protocol
+version turns "the benchmark is slow" into a specific, reportable
+finding.
+
+4. Stable error classification in the JSON
+------------------------------------------
+
+`context` is a human-readable string today, so a consumer wanting to
+branch on the kind of failure has to pattern-match prose. Add a stable
+machine field alongside it: the operation that failed (PUT, GET, MKCOL,
+MOVE, DELETE, PROPFIND, LOCK), the HTTP status observed, and the path.
+Define the set of kinds once and treat it as part of the JSON contract.
+Keep `context` exactly as it is; this is an addition, not a
+replacement.
+
+5. Tests for the harness itself
+-------------------------------
+
+There are no unit tests. Every check requires a live server, which is
+why the wsgidav harness exists. The result accounting, the JSON
+emission, the escaping, the notrun bookkeeping and the error paths can
+all be tested without a network by substituting a fake transport that
+returns canned responses. This is the largest testability gap in the
+tree and it is what makes changes to tests.c risky enough to need the
+byte-for-byte diffing ritual described above.
+
+A synthetic suite exercising warnings, contexts and every status was
+used while building the JSON output and worked well. Make that a
+permanent, checked-in test rather than a throwaway.
+
+6. Optional chunked-upload suite
+--------------------------------
+
+Several widely deployed DAV servers implement a chunked upload
+extension: MKCOL a per-transfer directory, PUT the parts into it under
+zero-padded numeric names, then MOVE a virtual assembly path onto the
+final destination. It is not in RFC 4918, so it must be opt-in and must
+not affect the default suite list or the expected results, but it is
+easy to implement wrongly and there is no convenient conformance test
+for it.
+
+7. Release and CI improvements
+------------------------------
+
+* Add a concurrency group so that pushing several commits in quick
+  succession cancels the superseded runs instead of running all of
+  them.
+* Add dependabot for the actions themselves.
+* Publish the executables individually as release assets, not only
+  inside the zip, so a download instruction can be a single fixed URL
+  that always points at the latest release. Keep the asset names free
+  of version strings for that reason; the zip can stay for people who
+  want everything at once.
+* Build artifacts per job, then collect them in one release job that
+  merges them into a single directory before publishing.
+* A release step must fail rather than overwrite an existing good
+  release.
+* Gate the build on a lint job.
+
 Outstanding work
 ================
 
-Worth doing, in rough priority order.
+Smaller maintenance items, in rough priority order.
 
 * The autotools build relinks every executable on every run. The link
   rules produce targets named "basic", "copymove" and so on, but MinGW
@@ -86,20 +269,34 @@ Worth doing, in rough priority order.
   actions/cache would save about half a minute per job. Low value while
   the job is this short.
 
-* Upstream's TODO listed these, and they are still open upstream. They
-  are test coverage rather than portability, so they belong upstream
-  rather than here:
+* Additional test coverage, carried over from the upstream TODO list
+  and still unimplemented. Do these here:
     - PROPPATCH may return 207 with an embedded 423; the lock tests
       check for 423 directly. Extending the PROPPATCH interface to
       return an ne_status per operation would let them check properly.
     - lock-null resource tests.
     - collection creation with a %20 space in the name.
+  Adding these makes the suite more thorough than the version it was
+  forked from, so say that plainly in the README once they land, and
+  add them to tests/expected-wsgidav.txt with the new counts.
+
+* Mine the upstream issue tracker and pull requests, including closed
+  ones, for test cases and fixes that were proposed but never landed.
+  Some contain real bugs worth covering. Take what has technical merit,
+  verify each one against a live server before keeping it, and update
+  the expected results.
 
 Things that were looked at and deliberately not done
 ====================================================
 
-* Merging the tolsen fork's tests, requested in upstream issue 8. See
-  the "What was not changed" section of README.md for the reasoning.
+* Merging the tolsen fork's tests wholesale, requested in upstream
+  issue 8. See the "What was not changed" section of README.md for the
+  reasoning: it is 1643 lines with no shared history, stale by many
+  commits, and unreviewed. That decision is about taking the whole
+  branch in one go, and does not rule out lifting individual test cases
+  from it, or from any other upstream issue or pull request, once each
+  has been read and verified on its own merits. See the mining item
+  above.
 
 * Connection reuse was measured, in case it was a performance problem.
   It is not: a props run makes 36 requests over one TCP connection. The

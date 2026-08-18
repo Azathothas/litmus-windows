@@ -623,7 +623,7 @@ static int propcleanup(void)
     return OK;
 }
 
-ne_test tests[] = 
+ne_test props_tests[] = 
 {
     INIT_TESTS,
 

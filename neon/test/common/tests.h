@@ -51,8 +51,24 @@ typedef struct {
 #define T_EXPECT_FAIL (2) /* expect failure */
 #define T_EXPECT_LEAKS (4) /* expect memory leak failures */
 
-/* array of tests to run: must be defined by each test suite. */
-extern ne_test tests[];
+/* The test array currently being run.  Set by run_suite(); each suite
+ * defines its own array under its own name, so that several suites can
+ * be linked into one binary. */
+extern ne_test *tests;
+
+/* Runs the array 'suite' under the name 'name', parsing 'argc'/'argv'
+ * as that suite's command line.  Returns the number of failed tests,
+ * or a negative value if the run could not be started.  All the
+ * harness's own state is reset first, so this may be called repeatedly
+ * in one process. */
+int run_suite(const char *name, ne_test *suite, int argc, char **argv);
+
+/* NEON_TEST_INIT may return either of these to end the run before any
+ * test executes, having already written whatever the command line
+ * asked for.  run_suite() then returns 0 or 1 respectively without
+ * running a test or reporting a parse failure. */
+#define TEST_INIT_DONE  (-2)    /* --help and friends: exit 0 */
+#define TEST_INIT_USAGE (-3)    /* usage error: exit 1 */
 
 /* define a test function which has the same name as the function,
  * and does check for memory leaks. */

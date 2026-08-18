@@ -381,7 +381,7 @@ static int move_cleanup(void)
     return OK;
 }
 
-ne_test tests[] = {
+ne_test copymove_tests[] = {
     INIT_TESTS,
 
     /*** Copy/move tests. ***/

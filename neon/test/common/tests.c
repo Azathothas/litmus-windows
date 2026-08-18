@@ -44,6 +44,9 @@
 #ifdef HAVE_SYS_TIME_H
 #include <sys/time.h>
 #endif
+/* Standard C, so unguarded: gmtime() and strftime() for the ISO 8601
+ * timestamp in the JSON output. */
+#include <time.h>
 
 #include "ne_string.h"
 #include "ne_alloc.h"
@@ -56,6 +59,8 @@
 
 char test_context[BUFSIZ];
 int have_context = 0;
+
+ne_test *tests;
 
 static FILE *child_debug, *debug;
 
@@ -82,6 +87,9 @@ struct test_record {
 
 static struct test_record *records;
 static int nrecords;
+
+/* Wall-clock start of the run, ISO 8601 UTC with milliseconds. */
+static char run_started_iso[40];
 
 static int quiet, count;
 
@@ -120,6 +128,40 @@ static double now_seconds(void)
         return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
 #endif
     return 0.0;
+}
+
+/* Writes the current time into 'buf' as an ISO 8601 UTC timestamp with
+ * millisecond precision, e.g. 2026-08-18T12:09:12.345Z.  Returns 0 if
+ * the time could not be determined, leaving 'buf' empty. */
+static int now_iso8601(char *buf, size_t buflen)
+{
+#if defined(HAVE_GETTIMEOFDAY) && defined(HAVE_SYS_TIME_H)
+    struct timeval tv;
+    struct tm *utc;
+    time_t secs;
+    char stamp[32];
+
+    if (gettimeofday(&tv, NULL) != 0) goto fail;
+
+    secs = (time_t)tv.tv_sec;
+    utc = gmtime(&secs);
+    if (utc == NULL) goto fail;
+
+    if (strftime(stamp, sizeof stamp, "%Y-%m-%dT%H:%M:%S", utc) == 0)
+        goto fail;
+
+    /* tv_usec is microseconds; truncate rather than round, so the
+     * stamp never reads as a moment that had not happened yet. */
+    if (ne_snprintf(buf, buflen, "%s.%03ldZ", stamp,
+                    (long)(tv.tv_usec / 1000)) == 0)
+        goto fail;
+
+    return 1;
+
+fail:
+#endif
+    if (buflen) buf[0] = '\0';
+    return 0;
 }
 
 /* Writes 'str' to stdout as a quoted JSON string. */
@@ -165,6 +207,26 @@ static void record_result(int n, const char *status, double duration)
     if (n >= nrecords) nrecords = n + 1;
 }
 
+/* Releases the per-test records. */
+static void free_records(void)
+{
+    int i;
+
+    for (i = 0; records && i < count; i++) {
+        unsigned w;
+
+        if (records[i].context) ne_free(records[i].context);
+        for (w = 0; w < records[i].nwarns; w++)
+            ne_free(records[i].warns[w]);
+        if (records[i].warns) ne_free(records[i].warns);
+    }
+    if (records) {
+        ne_free(records);
+        records = NULL;
+    }
+    nrecords = 0;
+}
+
 /* Emits the whole run as a single JSON object on stdout.  "notrun"
  * covers tests never reached because an earlier one returned FAILHARD
  * or SKIPREST. */
@@ -177,6 +239,10 @@ static void emit_json(double duration)
     if (test_target) {
         printf(",\"target\":");
         json_string(test_target);
+    }
+    if (run_started_iso[0]) {
+        printf(",\"started\":");
+        json_string(run_started_iso);
     }
     printf(",\"duration\":%.3f,\"tests\":[", duration);
 
@@ -214,18 +280,7 @@ static void emit_json(double duration)
            count - nrecords, warnings);
     fflush(stdout);
 
-    for (i = 0; records && i < count; i++) {
-        unsigned w;
-
-        if (records[i].context) ne_free(records[i].context);
-        for (w = 0; w < records[i].nwarns; w++)
-            ne_free(records[i].warns[w]);
-        if (records[i].warns) ne_free(records[i].warns);
-    }
-    if (records) {
-        ne_free(records);
-        records = NULL;
-    }
+    free_records();
 }
 
 void t_context(const char *context, ...)
@@ -352,49 +407,58 @@ static void print_prefix(int n)
 }
 
 
-int main(int argc, char *argv[])
+/* Closes the debug logs, leaving neither pointer dangling for the next
+ * suite.  Returns non-zero if a close failed. */
+static int close_logs(void)
+{
+    int ret = 0;
+
+    /* Drop the debug stream first: it points at one of these files. */
+    ne_debug_init(NULL, 0);
+
+    if (debug && fclose(debug)) {
+	fprintf(stderr, "Error closing debug.log: %s\n", strerror(errno));
+	ret = 1;
+    }
+    debug = NULL;
+
+    if (child_debug && fclose(child_debug)) {
+	fprintf(stderr, "Error closing child.log: %s\n", strerror(errno));
+	ret = 1;
+    }
+    child_debug = NULL;
+
+    return ret;
+}
+
+/* Returns every counter and buffer this file owns to its initial
+ * state, so that one process can run several suites in turn.  Anything
+ * declared at file scope above must be listed here. */
+static void reset_state(void)
+{
+    passes = fails = skipped = warnings = 0;
+    count = 0;
+    quiet = 0;
+    warned = 0;
+    aborted = 0;
+    test_num = 0;
+    test_name = NULL;
+    have_context = 0;
+    test_context[0] = '\0';
+    run_started_iso[0] = '\0';
+    free_records();
+}
+
+int run_suite(const char *name, ne_test *suite, int argc, char *argv[])
 {
     int n;
     char *tmp;
     double run_started;
-    
-    /* get basename(argv[0]) */
-    test_suite = strrchr(argv[0], '/');
-#ifdef _WIN32
-    {
-        /* Windows uses backslashes as path separators. */
-        const char *bslash = strrchr(argv[0], '\\');
 
-        if (bslash != NULL && (test_suite == NULL || bslash > test_suite))
-            test_suite = bslash;
-    }
-#endif
-    if (test_suite == NULL) {
-	test_suite = argv[0];
-    } else {
-	test_suite++;
-    }
+    reset_state();
 
-    if (strncmp(test_suite, "lt-", 3) == 0)
-        test_suite += 3;
-
-#ifdef _WIN32
-    {
-        /* Strip the executable suffix from the suite name. */
-        static char suite_name[64];
-        size_t len = strlen(test_suite);
-
-        if (len > 4 && len < sizeof(suite_name)
-            && test_suite[len - 4] == '.'
-            && (test_suite[len - 3] == 'e' || test_suite[len - 3] == 'E')
-            && (test_suite[len - 2] == 'x' || test_suite[len - 2] == 'X')
-            && (test_suite[len - 1] == 'e' || test_suite[len - 1] == 'E')) {
-            memcpy(suite_name, test_suite, len - 4);
-            suite_name[len - 4] = '\0';
-            test_suite = suite_name;
-        }
-    }
-#endif
+    tests = suite;
+    test_suite = name;
 
 #if defined(HAVE_SETLOCALE) && defined(LC_MESSAGES)
     setlocale(LC_MESSAGES, "");
@@ -426,12 +490,14 @@ int main(int argc, char *argv[])
             fprintf(stderr, "%s: Could not open child.log: %s\n", test_suite,
                     strerror(errno));
             fclose(debug);
+            debug = NULL;
             return -1;
         }
     }
 
     if (tests[0].fn == NULL) {
 	printf("-> no tests found in `%s'\n", test_suite);
+        close_logs();
 	return -1;
     }
 
@@ -461,9 +527,22 @@ int main(int argc, char *argv[])
     }
 
 #ifdef NEON_TEST_INIT
-    if (NEON_TEST_INIT(test_argc, (const char *const *)test_argv, &use_colour, &quiet)) {
-	fprintf(stderr, "%s: Failed parsing command-line.\n", test_suite);
-        return -1;
+    {
+        int init = NEON_TEST_INIT(test_argc, (const char *const *)test_argv,
+                                  &use_colour, &quiet);
+
+        if (init == TEST_INIT_DONE || init == TEST_INIT_USAGE) {
+            /* The command line has already been answered in full. */
+            close_logs();
+            ne_sock_exit();
+            return init == TEST_INIT_DONE ? 0 : 1;
+        }
+        else if (init) {
+            fprintf(stderr, "%s: Failed parsing command-line.\n", test_suite);
+            close_logs();
+            ne_sock_exit();
+            return -1;
+        }
     }
 #endif
 
@@ -495,6 +574,8 @@ int main(int argc, char *argv[])
         records = ne_calloc(count * sizeof(*records));
 
     run_started = now_seconds();
+    if (test_json)
+        now_iso8601(run_started_iso, sizeof run_started_iso);
 
     for (n = 0; !aborted && tests[n].fn != NULL; n++) {
 	int result, is_xfail = 0;
@@ -691,18 +772,10 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (debug && fclose(debug)) {
-	fprintf(stderr, "Error closing debug.log: %s\n", strerror(errno));
-	fails = 1;
-    }
-       
-    if (child_debug && fclose(child_debug)) {
-	fprintf(stderr, "Error closing child.log: %s\n", strerror(errno));
-	fails = 1;
-    }
+    if (close_logs()) fails = 1;
 
     ne_sock_exit();
-    
+
     return fails;
 }
 

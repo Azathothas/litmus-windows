@@ -184,20 +184,21 @@ RV=0
 RESULTS="$DAVROOT/results-$$.jsonl"
 : > "$RESULTS"
 
+CLI="$TESTROOT/litmus-cli"
+[ -x "$CLI" ] || CLI="$TESTROOT/litmus-cli.exe"
+if [ ! -x "$CLI" ]; then
+    echo "ERROR: could not find $TESTROOT/litmus-cli" >&2
+    exit 1
+fi
+
 for t in $TESTS; do
-    prog="$TESTROOT/$t"
-    [ -x "$prog" ] || prog="$TESTROOT/$t.exe"
-    if [ ! -x "$prog" ]; then
-        echo "ERROR: could not find $TESTROOT/$t" >&2
-        exit 1
-    fi
     # A fresh collection per suite keeps one suite's leftovers from
     # aborting the next.
     mkdir -p "$DAVROOT/$RUNDIR/$t"
     if [ $CHECK -eq 1 ]; then
-        "$prog" --json "http://127.0.0.1:$PORT/$RUNDIR/$t/" >> "$RESULTS" || :
+        "$CLI" "$t" --json "http://127.0.0.1:$PORT/$RUNDIR/$t/" >> "$RESULTS" || :
     else
-        "$prog" "$@" "http://127.0.0.1:$PORT/$RUNDIR/$t/" || RV=1
+        "$CLI" "$t" "$@" "http://127.0.0.1:$PORT/$RUNDIR/$t/" || RV=1
     fi
 done
 

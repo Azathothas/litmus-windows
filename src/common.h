@@ -27,10 +27,35 @@
 
 #include "tests.h"
 
+/* The fork's version, defined on the command line by both build paths
+ * from the VERSION file at the top of the tree.  PACKAGE_VERSION is
+ * the autotools value and says the same thing; the fallback keeps this
+ * header usable if a build path forgets to pass it. */
+#ifndef LITMUS_VERSION
+#define LITMUS_VERSION PACKAGE_VERSION
+#endif
+
 /* always use O_BINARY for cygwin/windows compatibility. */
 #ifndef O_BINARY
 #define O_BINARY (0)
 #endif
+
+/* Worker threads for the lockbomb suite: the default matches what the
+ * separate lockbomb executable used, and the ceiling stops a typo from
+ * asking for an allocation the machine will not survive. */
+#define LITMUS_THREADS_DEFAULT (20)
+#define LITMUS_THREADS_MAX (1024)
+
+/* Number of worker threads to use, set by --threads. */
+extern int litmus_threads;
+
+/* Returns the state owned by this file to its initial values, so that
+ * one process can run several suites in turn. */
+void litmus_reset(void);
+
+/* Releases what survives litmus_reset(): call once, after the last
+ * suite has run. */
+void litmus_cleanup(void);
 
 /* Creates and opens a temporary file, returning the fd, or -1 on error.
  * The filename is stored in *fname, and must be ne_free()d by the caller.

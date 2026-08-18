@@ -53,6 +53,8 @@ ne_session *i_session, *i_session2;
 ne_uri i_origin;
 ne_sock_addr *i_address;
 
+int litmus_threads = LITMUS_THREADS_DEFAULT;
+
 static int use_tls, tls_trust_everything;
 
 const char *i_username = NULL, *i_password;
@@ -63,9 +65,18 @@ static int system_proxy;
 
 static char *clicert_fn, *clicert_uri;
 
-/* Destination for the --trace wire dump, NULL when not tracing. */
+/* Destination for the --trace wire dump, NULL when not tracing.
+ * trace_path records the file it was opened for, so that a run of
+ * several suites appends to one dump rather than each suite truncating
+ * the one before it. */
 static FILE *trace_fp;
+static char *trace_path;
 static int trace_needs_close;
+
+/* Option codes for the long-only options. */
+enum {
+    OPT_THREADS = 256
+};
 
 static const struct option longopts[] = {
     { "htdocs", required_argument, NULL, 'd' },
@@ -81,6 +92,7 @@ static const struct option longopts[] = {
     { "json", no_argument, NULL, 'j' },
     { "verbose", no_argument, NULL, 'v' },
     { "trace", optional_argument, NULL, 't' },
+    { "threads", required_argument, NULL, OPT_THREADS },
     { NULL }
 };
 
@@ -96,7 +108,8 @@ static const struct option longopts[] = {
 " -j, --json                 write results to stdout as one JSON object\n" \
 " -v, --verbose              write the protocol trace to stderr\n"        \
 " -t, --trace[=FILE]         dump every request and response to FILE\n"   \
-"                            (default stderr; use - for stdout)\n"
+"                            (default stderr; use - for stdout)\n"       \
+"     --threads=N            number of worker threads (lockbomb only)\n"
 
 static void usage(FILE *output)
 {
@@ -153,6 +166,101 @@ int direct_connect(void)
     return test_connect();
 }
 
+/* Puts getopt back to its initial state, so that the next suite in a
+ * multi-suite run parses its own argv from the start. */
+static void reset_getopt(void)
+{
+#if defined(optreset) || defined(__FreeBSD__) || defined(__NetBSD__) \
+    || defined(__OpenBSD__) || defined(__APPLE__)
+    optreset = 1;
+    optind = 1;
+#elif defined(__GLIBC__)
+    /* glibc reinitialises fully, including the GNU permutation state,
+     * only when optind is set to zero. */
+    optind = 0;
+#else
+    optind = 1;
+#endif
+}
+
+void litmus_reset(void)
+{
+    reset_getopt();
+
+    ne_uri_free(&i_origin);
+    memset(&i_origin, 0, sizeof i_origin);
+
+    if (i_address) {
+        ne_addr_destroy(i_address);
+        i_address = NULL;
+    }
+
+    i_session = i_session2 = NULL;
+    i_class2 = 0;
+    use_tls = tls_trust_everything = 0;
+    i_username = i_password = NULL;
+    proxy_hostname = NULL;
+    proxy_port = 0;
+    system_proxy = 0;
+    clicert_fn = clicert_uri = NULL;
+    litmus_threads = LITMUS_THREADS_DEFAULT;
+
+    /* trace_fp deliberately survives: a run of several suites writes
+     * one dump, closed by litmus_cleanup(). */
+}
+
+void litmus_cleanup(void)
+{
+    if (trace_fp) {
+        fflush(trace_fp);
+        if (trace_needs_close) fclose(trace_fp);
+        trace_fp = NULL;
+        test_trace_fp = NULL;
+        trace_needs_close = 0;
+    }
+    if (trace_path) {
+        ne_free(trace_path);
+        trace_path = NULL;
+    }
+}
+
+/* Opens the --trace destination, or reuses the one already open for
+ * the same destination.  Returns non-zero on failure. */
+static int open_trace(const char *fname)
+{
+    if (fname == NULL) fname = "";      /* stderr */
+
+    if (trace_fp != NULL && trace_path != NULL
+        && strcmp(trace_path, fname) == 0) {
+        test_trace_fp = trace_fp;
+        return 0;
+    }
+
+    litmus_cleanup();
+
+    if (*fname == '\0') {
+        /* No argument: stdout is left free for results. */
+        trace_fp = stderr;
+    }
+    else if (strcmp(fname, "-") == 0) {
+        trace_fp = stdout;
+    }
+    else {
+        trace_fp = fopen(fname, "w");
+        if (trace_fp == NULL) {
+            fprintf(stderr, "%s: could not open trace file `%s': %s\n",
+                    test_suite, fname, strerror(errno));
+            return 1;
+        }
+        trace_needs_close = 1;
+    }
+
+    trace_path = ne_strdup(fname);
+    test_trace_fp = trace_fp;
+
+    return 0;
+}
+
 int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
 {
     ne_uri proxy = {0}, *server = &i_origin;
@@ -172,35 +280,30 @@ int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
             test_verbose = 1;
             break;
         case 't':
-            /* No argument, or "-", means stdout is left free for
-             * results, so the trace goes to stderr unless asked
-             * otherwise. */
-            if (optarg == NULL) {
-                trace_fp = stderr;
-            }
-            else if (strcmp(optarg, "-") == 0) {
-                trace_fp = stdout;
-            }
-            else {
-                trace_fp = fopen(optarg, "w");
-                if (trace_fp == NULL) {
-                    fprintf(stderr, "%s: could not open trace file `%s': %s\n",
-                            test_suite, optarg, strerror(errno));
-                    return 1;
-                }
-                trace_needs_close = 1;
-            }
-            test_trace_fp = trace_fp;
+            if (open_trace(optarg)) return 1;
             break;
         case 'u':
             clicert_uri = optarg;
             break;
+        case OPT_THREADS: {
+            char *end;
+            long value = strtol(optarg, &end, 10);
+
+            if (*optarg == '\0' || *end != '\0'
+                || value < 1 || value > LITMUS_THREADS_MAX) {
+                fprintf(stderr, "%s: --threads must be between 1 and %d\n",
+                        test_argv[0], LITMUS_THREADS_MAX);
+                return TEST_INIT_USAGE;
+            }
+            litmus_threads = (int)value;
+            break;
+        }
 	case 'd':
             t_warning("the 'htdocs' argument is now ignored");
 	    break;
 	case 'h':
 	    usage(stdout);
-	    exit(0);
+	    return TEST_INIT_DONE;
         case 'i':
             tls_trust_everything = 1;
             break;
@@ -221,7 +324,7 @@ int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
 	    break;
 	default:
 	    usage(stderr);
-	    exit(1);
+	    return TEST_INIT_USAGE;
 	}
     }
 
@@ -229,7 +332,7 @@ int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
 
     if (n == 0 || n > 3 || n == 2) {
 	usage(stderr);
-	exit(1);
+	return TEST_INIT_USAGE;
     }
 
     /* argv lives for the lifetime of the process, so the JSON output
@@ -433,7 +536,7 @@ static int init_session(ne_session *sess)
         ne_session_system_proxy(sess, 0);
     }
 
-    ne_set_useragent(sess, "litmus/" PACKAGE_VERSION);
+    ne_set_useragent(sess, "litmus/" LITMUS_VERSION);
 
     if (i_username) {
 	ne_set_server_auth(sess, auth, NULL);
@@ -494,12 +597,11 @@ int finish(void)
 {
     ne_session_destroy(i_session);
     ne_session_destroy(i_session2);
+    i_session = i_session2 = NULL;
 
-    if (trace_fp) {
-        fflush(trace_fp);
-        if (trace_needs_close) fclose(trace_fp);
-        trace_fp = NULL;
-    }
+    /* Flushed but not closed: a run of several suites shares one trace
+     * destination, which litmus_cleanup() closes at the end. */
+    if (trace_fp) fflush(trace_fp);
 
     return OK;
 }

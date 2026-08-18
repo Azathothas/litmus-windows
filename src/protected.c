@@ -434,7 +434,7 @@ static int prot_cleanup(void)
     return OK;
 }
 
-ne_test tests[] = {
+ne_test protected_tests[] = {
     INIT_TESTS,
 
     T(prot_init),

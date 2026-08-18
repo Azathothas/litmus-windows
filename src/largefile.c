@@ -139,7 +139,7 @@ static int large_get(void)
     return OK;
 }
 
-ne_test tests[] = {
+ne_test largefile_tests[] = {
     INIT_TESTS,
     T(init_largefile),
 

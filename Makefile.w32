@@ -28,9 +28,14 @@ RM      = rm -f
 CFLAGS  = -g -O2
 WARN    = -Wall
 
+# The version lives in one file that both build paths read, so that a
+# release cannot report one number here and another under autotools.
+VERSION := $(shell cat VERSION)
+
 # win32/config.h must be found before any generated config.h in the tree,
 # so the top directory is deliberately not on the include path.
 CPPFLAGS = -Iwin32 -Isrc -Ineon/src -Ineon/test/common \
+	   -DLITMUS_VERSION='"$(VERSION)"' \
 	   $(if $(PREFIX),-I$(PREFIX)/include)
 LDFLAGS  = $(if $(PREFIX),-L$(PREFIX)/lib)
 LIBS     = -lssl -lcrypto -lexpat -lws2_32
@@ -66,12 +71,15 @@ NEON_OBJS = \
 
 TEST_OBJS = src/common.o neon/test/common/tests.o
 
-HDRS = src/common.h neon/test/common/tests.h win32/config.h
+HDRS = src/common.h src/suites.h neon/test/common/tests.h win32/config.h
 
-# Suites built from a single like-named source file in src/.
-SIMPLE = basic copymove props locks http largefile protected
+# One executable holds every suite; the suites differ only in which
+# ne_test array they register.
+SUITES = basic copymove props locks http largefile protected lockbomb
 
-PROGS = $(addsuffix .exe,$(SIMPLE)) lockbomb.exe lockbomb-single.exe
+CLI_OBJS = src/litmus-cli.o $(addprefix src/,$(addsuffix .o,$(SUITES)))
+
+PROGS = litmus-cli.exe
 
 all: $(PROGS)
 
@@ -93,28 +101,19 @@ libtest.a: $(TEST_OBJS)
 
 $(NEON_OBJS): win32/config.h
 $(TEST_OBJS): $(HDRS)
+$(CLI_OBJS): $(HDRS)
 
-$(addsuffix .exe,$(SIMPLE)): %.exe: src/%.o libtest.a libneon.a
-	$(CC) $(LDFLAGS) -o $@ src/$*.o -L. -ltest -lneon $(LIBS)
-
-$(addprefix src/,$(addsuffix .o,$(SIMPLE))): $(HDRS)
-
-# lockbomb is the threaded build; lockbomb-single forces a single thread.
+# lockbomb runs its workers as threads, so the whole executable is
+# linked -pthread.
 src/lockbomb.o: src/lockbomb.c $(HDRS)
 	$(COMPILE) -pthread -c $< -o $@
 
-lockbomb.exe: src/lockbomb.o libtest.a libneon.a
-	$(CC) $(LDFLAGS) -pthread -o $@ src/lockbomb.o -L. -ltest -lneon $(LIBS) -lpthread
-
-src/lockbomb-single.o: src/lockbomb.c $(HDRS)
-	$(COMPILE) -DTHREADS=1 -c $< -o $@
-
-lockbomb-single.exe: src/lockbomb-single.o libtest.a libneon.a
-	$(CC) $(LDFLAGS) -o $@ src/lockbomb-single.o -L. -ltest -lneon $(LIBS)
+litmus-cli.exe: $(CLI_OBJS) libtest.a libneon.a
+	$(CC) $(LDFLAGS) -pthread -o $@ $(CLI_OBJS) \
+	    -L. -ltest -lneon $(LIBS) -lpthread
 
 clean:
-	$(RM) $(NEON_OBJS) $(TEST_OBJS)
-	$(RM) src/lockbomb-single.o $(addprefix src/,$(addsuffix .o,$(SIMPLE)))
+	$(RM) $(NEON_OBJS) $(TEST_OBJS) $(CLI_OBJS)
 	$(RM) libneon.a libtest.a $(PROGS)
 	$(RM) debug.log child.log
 

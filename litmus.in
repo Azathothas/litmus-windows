@@ -3,9 +3,9 @@
 
 prefix=@prefix@
 exec_prefix=@prefix@
-libexecdir=@libexecdir@
+bindir=@bindir@
 
-TESTROOT=${TESTROOT-"@libexecdir@/litmus"}
+TESTROOT=${TESTROOT-"@bindir@"}
 TESTS=${TESTS-"@TESTS@"}
 
 usage() {
@@ -30,12 +30,17 @@ Options:
 
 Significant environment variables:
 
-    \$TESTS     - specify test programs to run
+    \$TESTS     - specify the suites to run
         default: "@TESTS@"
-    \$TESTROOT  - specify alternate program directory
-        default: @libexecdir@/litmus
+    \$TESTROOT  - directory holding litmus-cli
+        default: @bindir@
 
-Feedback via <https://github.com/notroj/litmus>
+This script runs each suite in turn through litmus-cli, which can also
+run them itself:
+
+    litmus-cli all URL [USERNAME PASSWORD]
+
+Feedback via <https://github.com/Azathothas/litmus-windows>
 EOF
     exit $1
 }
@@ -52,20 +57,21 @@ test "$#" = "0" && usage 1
 
 RV=0
 
+CLI="${TESTROOT}/litmus-cli"
+test -x "${CLI}" || CLI="${TESTROOT}/litmus-cli.exe"
+if test ! -x "${CLI}"; then
+    echo "ERROR: Could not find ${TESTROOT}/litmus-cli"
+    exit 1
+fi
+
 for t in $TESTS; do
-    tprog="${TESTROOT}/${t}"
-    if test -x ${tprog}; then
-        if ${tprog} "$@"; then
-            : pass
-        elif test $nofail -eq 0; then
-            echo "See debug.log for network/debug traces."
-            exit 1
-        else
-            RV=1
-        fi
-    else
-        echo "ERROR: Could not find ${tprog}"
+    if ${CLI} ${t} "$@"; then
+        : pass
+    elif test $nofail -eq 0; then
+        echo "See debug.log for network/debug traces."
         exit 1
+    else
+        RV=1
     fi
 done
 

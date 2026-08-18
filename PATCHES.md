@@ -62,6 +62,9 @@ In `tests.c`:
 
 * Per-test timing via `gettimeofday`, guarded on `HAVE_GETTIMEOFDAY` and
   `HAVE_SYS_TIME_H`, falling back to a duration of zero.
+* An ISO 8601 UTC run timestamp with millisecond precision, from
+  `gmtime` and `strftime`. Sub-second digits are truncated rather than
+  rounded, so the stamp never names a moment that had not yet occurred.
 * A `struct test_record` array collecting name, status, duration,
   failure context and any warnings for each test.
 * `t_warning()` stores the message against the running test in JSON mode

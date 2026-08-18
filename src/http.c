@@ -57,7 +57,7 @@ static int expect100(void)
                 "PUT %sexpect100 HTTP/1.1" EOL
                 "Host: %s" EOL
                 "X-Litmus: http" EOL
-                "User-Agent: litmus/" PACKAGE_VERSION EOL
+                "User-Agent: litmus/" LITMUS_VERSION EOL
                 "Content-Length: 100" EOL
                 "Expect: 100-continue" EOL EOL,
                 i_path, ne_get_server_hostport(i_session));
@@ -95,7 +95,7 @@ static int expect100(void)
     return OK;
 }
 
-ne_test tests[] = {
+ne_test http_tests[] = {
     INIT_TESTS,
     T(direct_connect),
 

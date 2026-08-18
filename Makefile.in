@@ -29,13 +29,18 @@ VPATH = @srcdir@
 
 AR = @AR@
 RANLIB = @RANLIB@
+EXEEXT = @EXEEXT@
 
 TEST_COMMON = @TEST_COMMON@
 LIBOBJS = @LIBOBJS@
 TESTOBJS = src/common.o $(TEST_COMMON)/tests.o
-HDRS = src/common.h $(TEST_COMMON)/tests.h config.h
+HDRS = src/common.h src/suites.h $(TEST_COMMON)/tests.h config.h
 
-ALL_TESTS = @TESTS@ @THREADS_TEST@ largefile http lockbomb-single protected
+# Every suite is linked into one executable and selected by subcommand.
+CLI_OBJS = src/litmus-cli.o src/basic.o src/copymove.o src/props.o \
+	src/locks.o src/http.o src/largefile.o src/protected.o src/lockbomb.o
+PROGRAM = litmus-cli$(EXEEXT)
+
 TESTS = @TESTS@
 
 URL = http://`hostname`/dav/
@@ -48,9 +53,15 @@ INSTALL = @INSTALL@
 
 # Fixme; use $(LIBOBJS) here instead. not happy on many non-GNU makes
 # though; not sure why.
-ODEPS = subdirs libtest.a @LIBOBJS@
+#
+# subdirs is order-only: it is a phony target, so listing it as an
+# ordinary prerequisite would make the executable out of date on every
+# run and relink it every time.  Order-only keeps the neon build first
+# without that, and makes -j safe here.  This needs GNU make, which
+# both build paths already use.
+ODEPS = libtest.a @LIBOBJS@ | subdirs
 
-all: $(ALL_TESTS)
+all: $(PROGRAM)
 	@echo
 	@echo "  Now run:"
 	@echo ""
@@ -63,43 +74,20 @@ all: $(ALL_TESTS)
 litmus: litmus.in
 	@./config.status $@
 
-check: $(TESTS) litmus
+check: $(PROGRAM) litmus
 	@rm -f debug.log child.log
 	@TESTROOT="$(top_builddir)" $(top_builddir)/litmus $(OPTS) $(URL) $(CREDS)
 
-install: $(ALL_TESTS) litmus
+install: $(PROGRAM) litmus
 	$(INSTALL) -d $(DESTDIR)$(bindir)
-	$(INSTALL) -d $(DESTDIR)$(libexecdir)/litmus
 	$(INSTALL_PROGRAM) $(top_builddir)/litmus $(DESTDIR)$(bindir)/litmus
-	for t in $(ALL_TESTS); do \
-	  $(INSTALL_PROGRAM) $(top_builddir)/$$t $(DESTDIR)$(libexecdir)/litmus/$$t; done
+	$(INSTALL_PROGRAM) $(top_builddir)/$(PROGRAM) $(DESTDIR)$(bindir)/$(PROGRAM)
 
-props: src/props.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/props.o $(ALL_LIBS)
-
-basic: src/basic.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/basic.o $(ALL_LIBS)
-
-copymove: src/copymove.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/copymove.o $(ALL_LIBS)
-
-locks: src/locks.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/locks.o $(ALL_LIBS)
-
-http: src/http.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/http.o $(ALL_LIBS)
-
-largefile: src/largefile.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/largefile.o $(ALL_LIBS)
-
-lockbomb: src/lockbomb.o $(ODEPS)
-	$(PTHREAD_CC) $(PTHREAD_CFLAGS) $(LDFLAGS) -o $@ src/lockbomb.o $(PTHREAD_LIBS) $(ALL_LIBS)
-
-protected: src/protected.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/protected.o $(ALL_LIBS)
-
-lockbomb-single: src/lockbomb-single.o $(ODEPS)
-	$(CC) $(LDFLAGS) -o $@ src/lockbomb-single.o $(ALL_LIBS)
+# lockbomb runs its workers as threads, so the whole executable is
+# linked with the pthread flags.
+$(PROGRAM): $(CLI_OBJS) $(ODEPS)
+	$(PTHREAD_CC) $(PTHREAD_CFLAGS) $(LDFLAGS) -o $@ $(CLI_OBJS) \
+	    $(PTHREAD_LIBS) $(ALL_LIBS)
 
 subdirs:
 	@cd neon/src && $(MAKE)
@@ -110,20 +98,20 @@ libtest.a: $(TESTOBJS)
 
 clean:
 	@cd neon/src && $(MAKE) clean
-	rm -f */*.o $(TESTOBJS) $(ALL_TESTS) libtest.a *~ debug.log child.log
+	rm -f */*.o $(TESTOBJS) $(CLI_OBJS) $(PROGRAM) libtest.a *~ debug.log child.log
 
 distclean: clean
 	@cd neon/src && $(MAKE) distclean
 	rm -f Makefile litmus tests/httpd config.log config.h config.status
 
-test-httpd: litmus $(TESTS)
+test-httpd: litmus $(PROGRAM)
 	TESTROOT="$(top_builddir)" $(top_builddir)/tests/httpd $(OPTS)
 
 # Runs the suites against a local wsgidav rather than an httpd
 # container, so it works on Windows as well as Unix.  "make
 # test-wsgidav OPTS=--check" compares the results against
 # tests/expected-wsgidav.txt instead of just printing them.
-test-wsgidav: $(TESTS)
+test-wsgidav: $(PROGRAM)
 	TESTROOT="$(top_builddir)" $(top_srcdir)/tests/wsgidav.sh $(OPTS)
 
 .c.o:
@@ -132,6 +120,7 @@ test-wsgidav: $(TESTS)
 Makefile: $(top_srcdir)/Makefile.in
 	./config.status Makefile
 
+src/litmus-cli.o: src/litmus-cli.c $(HDRS)
 src/basic.o: src/basic.c $(HDRS)
 src/common.o: src/common.c $(HDRS)
 src/copymove.o: src/copymove.c $(HDRS)
@@ -142,6 +131,3 @@ src/largefile.o: src/largefile.c $(HDRS)
 src/protected.o: src/protected.c $(HDRS)
 src/lockbomb.o: src/lockbomb.c $(HDRS)
 	$(PTHREAD_CC) $(CPPFLAGS) $(PTHREAD_CFLAGS) $(CFLAGS) -c $< -o $@
-
-src/lockbomb-single.o: src/lockbomb.c $(HDRS)
-	$(CC) $(CPPFLAGS) -DTHREADS=1 $(CFLAGS) -c $< -o $@

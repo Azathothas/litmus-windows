@@ -376,7 +376,7 @@ static int mkcol_with_body(void)
     return OK;
 }
 
-ne_test tests[] = {
+ne_test basic_tests[] = {
     INIT_TESTS,
 
     /* Basic tests. */

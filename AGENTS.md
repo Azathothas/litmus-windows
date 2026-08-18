@@ -127,7 +127,7 @@ Run them in this order. Each assumes the ones before it work.
 | `copymove` | 13 | `COPY` and `MOVE` across the combinations that matter: overwrite true and false, destination existing and not, collection and non-collection, absolute destination URLs, and `Depth: 0` copy of a collection. |
 | `props` | 33 | `PROPFIND` and `PROPPATCH`. Setting, getting, replacing and deleting dead properties, XML namespace handling including high Unicode and namespace-valued properties, whether dead properties survive a `COPY`, `getlastmodified`, and malformed request handling. Needs a working dead-property store. |
 | `locks` | 40 | `LOCK` and `UNLOCK`. Exclusive and shared locks, lock discovery, refresh, `If:` conditional headers, locking a collection, indirect refresh through a member, and locking an unmapped URL. Requires DAV class 2. |
-| `largefile` | 5 | A single `PUT` of about 2 GB, then a `GET` back. Catches 32-bit size arithmetic. Slow, and needs the disk space. |
+| `largefile` | 5 | A single `PUT` of 2,147,549,184 bytes (2.0 GiB), then a `GET` back. Catches 32-bit size arithmetic. Slow, and needs the disk space. |
 | `protected` | 30 | Whether a metadata directory is reachable over DAV. Defaults to `.DAV`, which tests for CVE-2026-42535 in `mod_dav_fs`. Set `$TEST_PROTECTED` to check a different name. |
 | `lockbomb`, `lockbomb-single` | 3 | Stress test: 20,000 `LOCK`/`UNLOCK` cycles. `lockbomb` runs 20 threads in parallel, `lockbomb-single` runs one. Not a compliance test. Use it to look for leaks and lock-table exhaustion. |
 
@@ -167,6 +167,7 @@ One object per suite, on stdout, nothing else:
 {
   "suite": "copymove",
   "target": "http://127.0.0.1:8080/dav/",
+  "started": "2026-08-18T13:04:54.429Z",
   "duration": 5.790,
   "tests": [
     {"name": "copy_init", "status": "pass", "duration": 0.061},
@@ -184,7 +185,8 @@ One object per suite, on stdout, nothing else:
 | --- | --- |
 | `suite` | Executable name, without path or `.exe`. |
 | `target` | The URL you passed. |
-| `duration` | Seconds. Present on the run and on each test. |
+| `started` | When the first test began, ISO 8601 in UTC with millisecond precision, always suffixed `Z`. Truncated rather than rounded, so it never names a moment that had not happened yet. Absent only if the clock could not be read. |
+| `duration` | Seconds, to millisecond resolution. Present on the run and on each test. Wall-clock, so it includes server time and network time. |
 | `tests[].context` | The failure message. Absent when the test set none. This is the field to read: it names the method, the path, and the difference between expected and actual. |
 | `tests[].warnings` | Array of strings, present only when a test issued warnings. A warning is a spec deviation litmus chose not to fail on, usually a tolerable but wrong status code. Worth fixing, not urgent. |
 | `summary.total` | Every test defined in the suite, so `passed + failed + skipped + notrun` equals it. |

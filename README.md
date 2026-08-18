@@ -129,7 +129,7 @@ make -f Makefile.w32 STATIC=1
 ```
 
 That links OpenSSL and expat in statically. The binaries get large,
-around 8 MB each, and depend only on DLLs that ship with Windows.
+around 7.9 MiB each, and depend only on DLLs that ship with Windows.
 
 ### If OpenSSL and expat are somewhere else
 
@@ -266,6 +266,7 @@ parser. The exit status is the number of failed tests, same as always.
 {
   "suite": "copymove",
   "target": "http://dav.example.com/path/",
+  "started": "2026-08-18T13:04:54.429Z",
   "duration": 5.790,
   "tests": [
     {"name": "begin", "status": "pass", "duration": 0.061},
@@ -282,6 +283,10 @@ parser. The exit status is the number of failed tests, same as always.
 did not set one. A `warnings` array appears on a test that issued
 warnings. `notrun` counts tests that were never reached because an
 earlier test aborted the suite.
+
+`started` is ISO 8601 in UTC with millisecond precision, always ending
+in `Z`. Durations are seconds to millisecond resolution, and are
+wall-clock, so they include server and network time.
 
 Running several suites through the `litmus` script with `--json` gives
 one object per suite, one per line, which is JSON Lines.

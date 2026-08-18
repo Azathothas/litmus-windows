@@ -1,0 +1,221 @@
+/*
+   litmus: WebDAV server test suite: one executable, one subcommand per
+   suite.
+   Copyright (C) 2026, Azathothas <AjamX101@gmail.com>
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 2 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
+
+#include <config.h>
+
+#ifdef HAVE_STRING_H
+#include <string.h>
+#endif
+
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <ne_utils.h>
+#include <ne_socket.h>
+#include <ne_alloc.h>
+
+#include "common.h"
+#include "suites.h"
+
+const struct litmus_suite litmus_suites[] = {
+    { "basic", basic_tests,
+      "PUT, GET, DELETE and MKCOL on plain resources and collections",
+      1, 0 },
+    { "copymove", copymove_tests,
+      "COPY and MOVE, for resources and for collections",
+      1, 0 },
+    { "props", props_tests,
+      "property handling: PROPFIND and PROPPATCH",
+      1, 0 },
+    { "locks", locks_tests,
+      "LOCK and UNLOCK, including collection and conditional requests",
+      1, 0 },
+    { "http", http_tests,
+      "HTTP-level behaviour, currently Expect: 100-continue",
+      1, 0 },
+    { "largefile", largefile_tests,
+      "a 2147549184 byte (2 GiB) PUT followed by a GET",
+      0, 0 },
+    { "protected", protected_tests,
+      "every method must be refused on a protected metadata collection",
+      0, 0 },
+    { "lockbomb", lockbomb_tests,
+      "lock/unlock stress, 20 worker threads by default",
+      0, LITMUS_THREADS_DEFAULT },
+    { "lockbomb-single", lockbomb_single_tests,
+      "lock/unlock stress in one thread",
+      0, 1 },
+    { NULL, NULL, NULL, 0, 0 }
+};
+
+const struct litmus_suite *litmus_suite_find(const char *name)
+{
+    const struct litmus_suite *s;
+
+    for (s = litmus_suites; s->name; s++)
+        if (strcmp(s->name, name) == 0) return s;
+
+    return NULL;
+}
+
+static void usage(FILE *out, const char *argv0)
+{
+    const struct litmus_suite *s;
+
+    fprintf(out,
+            "Usage: %s COMMAND [OPTIONS] URL [username password]\n"
+            "\n"
+            "Suites:\n", argv0);
+
+    for (s = litmus_suites; s->name; s++)
+        fprintf(out, "  %-16s%s\n", s->name, s->summary);
+
+    fprintf(out,
+            "\n"
+            "Other commands:\n"
+            "  all             run the standard suites in order:");
+
+    for (s = litmus_suites; s->name; s++)
+        if (s->in_all) fprintf(out, " %s", s->name);
+
+    fprintf(out,
+            "\n"
+            "  list            list the suites, one name and summary per line\n"
+            "  version         print the version\n"
+            "\n"
+            "Run `%s COMMAND --help' for the options a command takes.\n"
+            "The URL must be an existing collection that litmus may create a\n"
+            "collection called `litmus' inside.\n",
+            argv0);
+}
+
+static void list_suites(void)
+{
+    const struct litmus_suite *s;
+
+    for (s = litmus_suites; s->name; s++)
+        printf("%-16s%s\n", s->name, s->summary);
+}
+
+/* argv[0] for the suite currently running: "litmus-cli basic" and so
+ * on, so that a usage message names the command the user typed.  Held
+ * until the next dispatch replaces it, since the suite keeps the
+ * pointer in test_argv for as long as it runs. */
+static char *cmdname;
+
+/* Runs one suite, giving it 'argc'/'argv' as its own command line. */
+static int dispatch(const struct litmus_suite *suite, const char *argv0,
+                    int argc, char **argv)
+{
+    litmus_reset();
+
+    /* The subcommand chooses the default concurrency; --threads, parsed
+     * inside run_suite() below, overrides it. */
+    if (suite->threads) litmus_threads = suite->threads;
+
+    if (cmdname) ne_free(cmdname);
+    cmdname = ne_concat(argv0, " ", suite->name, NULL);
+    argv[0] = cmdname;
+
+    return run_suite(suite->name, suite->tests, argc, argv);
+}
+
+int main(int argc, char *argv[])
+{
+    const struct litmus_suite *suite;
+    const char *cmd;
+    int ret;
+
+    if (argc < 2) {
+        usage(stderr, argv[0]);
+        return 1;
+    }
+
+    cmd = argv[1];
+
+    if (strcmp(cmd, "--help") == 0 || strcmp(cmd, "-h") == 0
+        || strcmp(cmd, "help") == 0) {
+        usage(stdout, argv[0]);
+        return 0;
+    }
+
+    if (strcmp(cmd, "--version") == 0 || strcmp(cmd, "-V") == 0
+        || strcmp(cmd, "version") == 0) {
+        printf("litmus %s\n%s\n", LITMUS_VERSION, ne_version_string());
+        return 0;
+    }
+
+    if (strcmp(cmd, "list") == 0) {
+        list_suites();
+        return 0;
+    }
+
+    /* One socket-library reference for the whole process, so that the
+     * per-suite pairs inside run_suite() never take the count to zero
+     * and tear down OpenSSL between suites. */
+    if (ne_sock_init()) {
+        fprintf(stderr, "%s: socket library initialization failed\n", argv[0]);
+        return 1;
+    }
+
+    if (strcmp(cmd, "all") == 0) {
+        int failures = 0, fatal = 0;
+
+        for (suite = litmus_suites; suite->name; suite++) {
+            int suite_ret;
+
+            if (!suite->in_all) continue;
+
+            /* argv is rewritten per suite: argv[0] is replaced with the
+             * command name and argv[1] is the subcommand being dropped,
+             * so each suite must start from the same slice. */
+            suite_ret = dispatch(suite, argv[0], argc - 1, argv + 1);
+
+            if (suite_ret < 0) fatal = suite_ret;
+            else failures += suite_ret;
+        }
+
+        litmus_cleanup();
+
+        if (fatal) ret = fatal;
+        /* The exit status counts failed tests, and an exit status has
+         * only 8 bits: stop short of the range the shell uses for
+         * signalled exits rather than wrapping around to zero. */
+        else ret = failures > 125 ? 125 : failures;
+    }
+    else if ((suite = litmus_suite_find(cmd)) != NULL) {
+        ret = dispatch(suite, argv[0], argc - 1, argv + 1);
+        litmus_cleanup();
+    }
+    else {
+        fprintf(stderr, "%s: unknown command `%s'\n", argv[0], cmd);
+        usage(stderr, argv[0]);
+        ret = 1;
+    }
+
+    if (cmdname) {
+        ne_free(cmdname);
+        cmdname = NULL;
+    }
+
+    ne_sock_exit();
+
+    return ret;
+}

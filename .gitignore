@@ -15,16 +15,8 @@
 /tests/httpd
 /neon/src/Makefile
 
-# Test suite executables (Unix names; the .exe forms are covered below).
-/basic
-/copymove
-/http
-/largefile
-/lockbomb
-/lockbomb-single
-/locks
-/props
-/protected
+# The executable (Unix name; the .exe form is covered below).
+/litmus-cli
 
 # Build output.
 *.o
