@@ -17,6 +17,11 @@
 # harness regression or a deliberate change that needs the expected
 # files regenerated -- and the diff read before they are checked in.
 #
+# Comparing against a checked-in file only proves the output has not
+# moved, not that it was ever right, so the JSON is also handed to a
+# real parser.  That needs a Python and is skipped without one; nothing
+# else here needs anything installed.
+#
 # Normalisation, and why:
 #
 #   text   carriage returns are deleted, then `cat -v' renders what is
@@ -61,24 +66,25 @@ trap 'rm -rf "$WORK"' EXIT INT TERM
 mkdir -p "$EXPECTED"
 
 # Runs one mode into $WORK/$1.out, normalised and with the exit status
-# appended so that it is compared too.
+# appended so that it is compared too.  The unnormalised output is kept
+# as $WORK/$1.raw for the JSON parse check below.
 capture() {
     name=$1
     shift
 
     set +e
-    TEST_NODEBUG=1 TEST_COLOUR=0 "$CLI" selftest "$@" > "$WORK/raw" 2>&1
+    TEST_NODEBUG=1 TEST_COLOUR=0 "$CLI" selftest "$@" > "$WORK/$name.raw" 2>&1
     status=$?
     set -e
 
     case $name in
         json)
             sed -e 's/"duration":[0-9.]*/"duration":X/g' \
-                -e 's/"started":"[^"]*"/"started":"X"/g' "$WORK/raw" \
+                -e 's/"started":"[^"]*"/"started":"X"/g' "$WORK/$name.raw" \
                 | tr -d '\r' > "$WORK/$name.out"
             ;;
         *)
-            tr -d '\r' < "$WORK/raw" | cat -v > "$WORK/$name.out"
+            tr -d '\r' < "$WORK/$name.raw" | cat -v > "$WORK/$name.out"
             ;;
     esac
 
@@ -114,6 +120,39 @@ done
 if [ $REGEN -eq 1 ]; then
     echo "Expected output regenerated.  Read the diff before checking it in."
     exit 0
+fi
+
+# Comparing against a checked-in file proves the output has not moved,
+# not that it was ever right: --regenerate would happily enshrine broken
+# JSON.  A real parser is the independent check, and the escaping test
+# in the synthetic suite is what makes it worth running.  Optional,
+# because the point of this script is that it needs nothing installed.
+if [ $REGEN -eq 0 ]; then
+    # shellcheck source=tests/python.sh
+    . tests/python.sh
+    if [ -n "${PYTHON-}" ]; then
+        if "$PYTHON" - "$WORK/json.raw" <<'PY'
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    lines = [l for l in (line.strip() for line in fh) if l]
+
+for n, line in enumerate(lines, 1):
+    try:
+        json.loads(line)
+    except ValueError as exc:
+        sys.exit("  line %d is not valid JSON: %s" % (n, exc))
+
+print("  json parses (%d objects)" % len(lines))
+PY
+        then :
+        else
+            echo "  the JSON output does not parse" >&2
+            rc=1
+        fi
+    else
+        echo "  json parse check skipped: no Python found"
+    fi
 fi
 
 if [ $rc -eq 0 ]; then

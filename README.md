@@ -424,6 +424,11 @@ second and needs nothing installed. `./tests/harness.sh --regenerate`
 rewrites the expected files after a deliberate change; read the diff
 before checking it in.
 
+Because a checked-in expected file proves only that the output has not
+moved, and `--regenerate` would happily enshrine broken JSON, the script
+also hands the JSON to a real parser. That step needs a Python and is
+skipped without one.
+
 ## Testing against a local server
 
 Two harnesses run the suites against a real server. Neither server is
