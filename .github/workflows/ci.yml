@@ -265,6 +265,13 @@ jobs:
       - name: Put the tag's own message above the generated notes
         run: |
           msg=$(git tag -l --format='%(contents)' "$TAG")
+          if [ -z "$msg" ]; then
+            # checkout does not always leave the tag object behind, and
+            # a missing message would quietly leave the page bare.
+            git fetch --no-tags --depth=1 origin \
+              "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || :
+            msg=$(git tag -l --format='%(contents)' "$TAG")
+          fi
           if [ -n "$msg" ]; then
             generated=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
                           --json body --jq .body)
@@ -272,7 +279,7 @@ jobs:
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
               --notes-file notes.md
           else
-            echo "$TAG is not an annotated tag; leaving the generated notes"
+            echo "no message on $TAG; leaving the generated notes alone"
           fi
 
       # A release that exists but has no assets is worse than none: the
