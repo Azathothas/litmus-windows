@@ -258,6 +258,23 @@ jobs:
             dist/litmus-cli.exe \
             litmus-windows-x86_64.zip
 
+      # --generate-notes on a repository whose commits go straight to
+      # master produces one line, a link to the compare view.  The
+      # annotated tag already says what the release is, so put that
+      # above it rather than leaving the page bare.
+      - name: Put the tag's own message above the generated notes
+        run: |
+          msg=$(git tag -l --format='%(contents)' "$TAG")
+          if [ -n "$msg" ]; then
+            generated=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+                          --json body --jq .body)
+            printf '%s\n\n---\n\n%s\n' "$msg" "$generated" > notes.md
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --notes-file notes.md
+          else
+            echo "$TAG is not an annotated tag; leaving the generated notes"
+          fi
+
       # A release that exists but has no assets is worse than none: the
       # fixed download URL would 404 and nothing would have said so.
       - name: Confirm both assets are attached

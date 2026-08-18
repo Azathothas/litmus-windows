@@ -135,6 +135,32 @@ Nothing.  The list that used to be here is done:
   * --json gained the "error" object.
   * The harness gained a self-test that needs no server.
 
+Cutting a release
+=================
+
+Bump VERSION, commit, wait for CI to go green on that commit, then
+
+  git tag -a vX.Y-winN
+  git push origin vX.Y-winN
+
+The tag must be annotated and its name must be "v" plus VERSION
+exactly, or the release job refuses to run.  It also refuses if a
+release with that tag already exists, and it checks both before it
+uploads anything, so a good release cannot be overwritten by accident.
+The workflow copies the tag's message above the generated notes, so the
+tag message is the release description.
+
+Do not quote the built executable's size in a tag message: it is not
+known until CI has built it, and it moves with the OpenSSL and expat
+versions the runner happens to have.  v0.18-win2 was tagged with the
+size measured on a development machine, 8610579 bytes, where the
+published binary is 8593710.
+
+Afterwards, confirm the fixed URL resolves and the binary runs:
+
+  curl -fsSL -o litmus-cli.exe https://github.com/Azathothas/litmus-windows/releases/latest/download/litmus-cli.exe
+  ./litmus-cli.exe selftest
+
 Outstanding work
 ================
 
