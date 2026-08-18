@@ -1,0 +1,121 @@
+# Makefile.w32 -- standalone Windows build for litmus.
+#
+# Builds litmus and the bundled neon on Windows with a MinGW-w64
+# toolchain and GNU make, without needing autotools.  The configuration
+# normally produced by configure is checked in as win32/config.h.
+#
+#   make -f Makefile.w32
+#
+# OpenSSL and expat are required, and are picked up from the compiler's
+# own search path -- which is what an MSYS2 UCRT64 shell already gives
+# you, so no extra configuration is needed there.
+#
+# If they live outside the toolchain, set PREFIX to a sysroot providing
+# both.  Note that PREFIX must belong to the same toolchain as CC: aiming
+# a standalone MinGW-w64 at another installation's sysroot picks up that
+# installation's C runtime too, and the link fails on mismatched CRT
+# symbols (_gnu_exception_handler and friends).
+#
+# CC, CFLAGS, CPPFLAGS, LDFLAGS and LIBS may all be overridden.
+
+PREFIX  =
+
+CC      = gcc
+AR      = ar
+RANLIB  = ranlib
+RM      = rm -f
+
+CFLAGS  = -g -O2
+WARN    = -Wall
+
+# win32/config.h must be found before any generated config.h in the tree,
+# so the top directory is deliberately not on the include path.
+CPPFLAGS = -Iwin32 -Isrc -Ineon/src -Ineon/test/common \
+	   $(if $(PREFIX),-I$(PREFIX)/include)
+LDFLAGS  = $(if $(PREFIX),-L$(PREFIX)/lib)
+LIBS     = -lssl -lcrypto -lexpat -lws2_32
+
+# STATIC=1 links everything into the executables, so they run on a
+# machine that has no MSYS2 runtime and no OpenSSL or expat DLLs.  This
+# is what the released binaries are built with.
+#
+# XML_STATIC has to be defined for every translation unit that includes
+# expat.h, not just at link time: without it expat's header declares its
+# entry points dllimport and the link fails on __imp_XML_* symbols.
+# OpenSSL's static libraries pull in the Windows crypto and socket
+# libraries directly, hence the longer library list.
+STATIC =
+ifeq ($(STATIC),1)
+CPPFLAGS += -DXML_STATIC
+LDFLAGS  += -static
+LIBS      = -lssl -lcrypto -lexpat \
+	    -lws2_32 -lcrypt32 -lbcrypt -ladvapi32 -luser32
+endif
+
+COMPILE = $(CC) $(CPPFLAGS) $(CFLAGS) $(WARN)
+
+NEON_OBJS = \
+	neon/src/ne_request.o neon/src/ne_session.o neon/src/ne_basic.o \
+	neon/src/ne_string.o neon/src/ne_uri.o neon/src/ne_dates.o \
+	neon/src/ne_alloc.o neon/src/ne_md5.o neon/src/ne_utils.o \
+	neon/src/ne_socket.o neon/src/ne_auth.o neon/src/ne_redirect.o \
+	neon/src/ne_compress.o neon/src/ne_i18n.o neon/src/ne_pkcs11.o \
+	neon/src/ne_socks.o neon/src/ne_ssl.o neon/src/ne_207.o \
+	neon/src/ne_xml.o neon/src/ne_props.o neon/src/ne_locks.o \
+	neon/src/ne_xmlreq.o neon/src/ne_openssl.o
+
+TEST_OBJS = src/common.o neon/test/common/tests.o
+
+HDRS = src/common.h neon/test/common/tests.h win32/config.h
+
+# Suites built from a single like-named source file in src/.
+SIMPLE = basic copymove props locks http largefile protected
+
+PROGS = $(addsuffix .exe,$(SIMPLE)) lockbomb.exe lockbomb-single.exe
+
+all: $(PROGS)
+
+libneon.a: $(NEON_OBJS)
+	$(RM) $@
+	$(AR) cr $@ $(NEON_OBJS)
+	$(RANLIB) $@
+
+libtest.a: $(TEST_OBJS)
+	$(RM) $@
+	$(AR) cr $@ $(TEST_OBJS)
+	$(RANLIB) $@
+
+.SUFFIXES:
+.SUFFIXES: .c .o
+
+.c.o:
+	$(COMPILE) -c $< -o $@
+
+$(NEON_OBJS): win32/config.h
+$(TEST_OBJS): $(HDRS)
+
+$(addsuffix .exe,$(SIMPLE)): %.exe: src/%.o libtest.a libneon.a
+	$(CC) $(LDFLAGS) -o $@ src/$*.o -L. -ltest -lneon $(LIBS)
+
+$(addprefix src/,$(addsuffix .o,$(SIMPLE))): $(HDRS)
+
+# lockbomb is the threaded build; lockbomb-single forces a single thread.
+src/lockbomb.o: src/lockbomb.c $(HDRS)
+	$(COMPILE) -pthread -c $< -o $@
+
+lockbomb.exe: src/lockbomb.o libtest.a libneon.a
+	$(CC) $(LDFLAGS) -pthread -o $@ src/lockbomb.o -L. -ltest -lneon $(LIBS) -lpthread
+
+src/lockbomb-single.o: src/lockbomb.c $(HDRS)
+	$(COMPILE) -DTHREADS=1 -c $< -o $@
+
+lockbomb-single.exe: src/lockbomb-single.o libtest.a libneon.a
+	$(CC) $(LDFLAGS) -o $@ src/lockbomb-single.o -L. -ltest -lneon $(LIBS)
+
+clean:
+	$(RM) $(NEON_OBJS) $(TEST_OBJS)
+	$(RM) src/lockbomb-single.o $(addprefix src/,$(addsuffix .o,$(SIMPLE)))
+	$(RM) libneon.a libtest.a $(PROGS)
+	$(RM) debug.log child.log
+
+.PHONY: all clean

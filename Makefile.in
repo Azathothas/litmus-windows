@@ -12,7 +12,7 @@ datarootdir = @datarootdir@
 # Toolchain settings
 CC = @CC@
 CFLAGS = @CFLAGS@
-CPPFLAGS = @DEFS@ @CPPFLAGS@ -I$(top_srcdir)/src -I$(top_srcdir)/test-common
+CPPFLAGS = @DEFS@ @CPPFLAGS@ -I$(top_srcdir)/src -I$(top_srcdir)/$(TEST_COMMON)
 PTHREAD_CC = @PTHREAD_CC@
 PTHREAD_CFLAGS = @PTHREAD_CFLAGS@
 PTHREAD_LIBS = @PTHREAD_LIBS@
@@ -30,9 +30,10 @@ VPATH = @srcdir@
 AR = @AR@
 RANLIB = @RANLIB@
 
+TEST_COMMON = @TEST_COMMON@
 LIBOBJS = @LIBOBJS@
-TESTOBJS = src/common.o test-common/tests.o
-HDRS = src/common.h test-common/tests.h config.h
+TESTOBJS = src/common.o $(TEST_COMMON)/tests.o
+HDRS = src/common.h $(TEST_COMMON)/tests.h config.h
 
 ALL_TESTS = @TESTS@ @THREADS_TEST@ largefile http lockbomb-single protected
 TESTS = @TESTS@
@@ -57,7 +58,7 @@ all: $(ALL_TESTS)
 	@echo ' or  make URL=http://dav.server/path/ CREDS="uname passwd" check'
 	@echo ""
 
-.PHONY: install check test-httpd clean distclean subdirs
+.PHONY: install check test-httpd test-wsgidav clean distclean subdirs
 
 litmus: litmus.in
 	@./config.status $@
@@ -109,14 +110,21 @@ libtest.a: $(TESTOBJS)
 
 clean:
 	@cd neon/src && $(MAKE) clean
-	rm -f */*.o $(ALL_TESTS) libtest.a *~ debug.log child.log
+	rm -f */*.o $(TESTOBJS) $(ALL_TESTS) libtest.a *~ debug.log child.log
 
 distclean: clean
 	@cd neon/src && $(MAKE) distclean
-	rm Makefile litmus config.log config.h config.status
+	rm -f Makefile litmus tests/httpd config.log config.h config.status
 
 test-httpd: litmus $(TESTS)
 	TESTROOT="$(top_builddir)" $(top_builddir)/tests/httpd $(OPTS)
+
+# Runs the suites against a local wsgidav rather than an httpd
+# container, so it works on Windows as well as Unix.  "make
+# test-wsgidav OPTS=--check" compares the results against
+# tests/expected-wsgidav.txt instead of just printing them.
+test-wsgidav: $(TESTS)
+	TESTROOT="$(top_builddir)" $(top_srcdir)/tests/wsgidav.sh $(OPTS)
 
 .c.o:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@

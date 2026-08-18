@@ -39,6 +39,8 @@
 #include <ne_ssl.h>
 #include <ne_session.h>
 #include <ne_locks.h>
+#include <ne_string.h>
+#include <ne_alloc.h>
 
 #include "getopt.h"
 
@@ -61,6 +63,10 @@ static int system_proxy;
 
 static char *clicert_fn, *clicert_uri;
 
+/* Destination for the --trace wire dump, NULL when not tracing. */
+static FILE *trace_fp;
+static int trace_needs_close;
+
 static const struct option longopts[] = {
     { "htdocs", required_argument, NULL, 'd' },
     { "help", no_argument, NULL, 'h' },
@@ -72,6 +78,9 @@ static const struct option longopts[] = {
     { "client-cert",  required_argument, NULL, 'c' },
     { "client-cert-uri",  required_argument, NULL, 'u' },
     { "insecure", no_argument, NULL, 'i' },
+    { "json", no_argument, NULL, 'j' },
+    { "verbose", no_argument, NULL, 'v' },
+    { "trace", optional_argument, NULL, 't' },
     { NULL }
 };
 
@@ -83,7 +92,11 @@ static const struct option longopts[] = {
 " -i, --insecure             ignore TLS certificate verification failures\n" \
 " -q, --quiet                use abbreviated output\n"                  \
 " -n, --no-colour            disable colour in output\n"                 \
-" -o, --colour               enable colour in output\n"
+" -o, --colour               enable colour in output\n"                  \
+" -j, --json                 write results to stdout as one JSON object\n" \
+" -v, --verbose              write the protocol trace to stderr\n"        \
+" -t, --trace[=FILE]         dump every request and response to FILE\n"   \
+"                            (default stderr; use - for stdout)\n"
 
 static void usage(FILE *output)
 {
@@ -147,10 +160,37 @@ int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
     char *proxy_url = NULL;
 
     while ((optc = getopt_long(argc, test_argv,
-			       "c:d:hinop:qsu:", longopts, NULL)) != -1) {
+			       "c:d:hijnop:qst::u:v", longopts, NULL)) != -1) {
 	switch (optc) {
         case 'c':
             clicert_fn = optarg;
+            break;
+        case 'j':
+            test_json = 1;
+            break;
+        case 'v':
+            test_verbose = 1;
+            break;
+        case 't':
+            /* No argument, or "-", means stdout is left free for
+             * results, so the trace goes to stderr unless asked
+             * otherwise. */
+            if (optarg == NULL) {
+                trace_fp = stderr;
+            }
+            else if (strcmp(optarg, "-") == 0) {
+                trace_fp = stdout;
+            }
+            else {
+                trace_fp = fopen(optarg, "w");
+                if (trace_fp == NULL) {
+                    fprintf(stderr, "%s: could not open trace file `%s': %s\n",
+                            test_suite, optarg, strerror(errno));
+                    return 1;
+                }
+                trace_needs_close = 1;
+            }
+            test_trace_fp = trace_fp;
             break;
         case 'u':
             clicert_uri = optarg;
@@ -191,6 +231,10 @@ int litmus_init(int argc, const char *const *argv, int *use_colour, int *quiet)
 	usage(stderr);
 	exit(1);
     }
+
+    /* argv lives for the lifetime of the process, so the JSON output
+     * can reference the target URL directly. */
+    test_target = argv[optind];
 
     NE_DEBUG(NE_DBG_HTTP, "litmus: Parsing URI %s...\n", argv[optind]);
 
@@ -269,9 +313,71 @@ static int auth(void *ud, const char *realm, int attempt,
 static void i_pre_send(ne_request *req, void *userdata, ne_buffer *hdr)
 {
     const char *name = userdata;
-    
+
     ne_buffer_snprintf(hdr, BUFSIZ, "%s: %s: %d (%s)\r\n",
                        name, test_suite, test_num, tests[test_num].name);
+}
+
+/* Writes 'text' with every line prefixed by 'prefix', so that a request
+ * or response block stays visually distinct in the trace. */
+static void trace_block(const char *prefix, const char *text)
+{
+    const char *p = text;
+
+    while (p && *p) {
+        const char *eol = strchr(p, '\n');
+        size_t len = eol ? (size_t)(eol - p) : strlen(p);
+
+        /* Requests carry CRLF line endings; drop the CR so the trace
+         * does not end up with stray carriage returns in it. */
+        if (len > 0 && p[len - 1] == '\r') len--;
+
+        fprintf(trace_fp, "%s %.*s\n", prefix, (int)len, p);
+
+        if (!eol) break;
+        p = eol + 1;
+    }
+}
+
+/* Dumps the outgoing request line and headers. */
+static void trace_pre_send(ne_request *req, void *userdata, ne_buffer *hdr)
+{
+    const char *label = userdata;
+
+    fprintf(trace_fp, "\n--- %s %d (%s)%s ---\n", test_suite, test_num,
+            tests[test_num].name, label);
+    trace_block(">", hdr->data);
+    fflush(trace_fp);
+}
+
+/* Dumps the response status line and headers. */
+static void trace_post_headers(ne_request *req, void *userdata,
+                               const ne_status *status)
+{
+    void *cursor = NULL;
+    const char *name, *value;
+
+    fprintf(trace_fp, "< HTTP/%d.%d %d %s\n", status->major_version,
+            status->minor_version, status->code,
+            status->reason_phrase ? status->reason_phrase : "");
+
+    while ((cursor = ne_response_header_iterate(req, cursor,
+                                                &name, &value)) != NULL) {
+        fprintf(trace_fp, "< %s: %s\n", name, value);
+    }
+
+    fputs("<\n", trace_fp);
+    fflush(trace_fp);
+}
+
+/* Attaches the tracing hooks to 'sess'.  'label' distinguishes the
+ * second session in the output. */
+static void trace_session(ne_session *sess, const char *label)
+{
+    if (!trace_fp) return;
+
+    ne_hook_pre_send(sess, trace_pre_send, (void *)label);
+    ne_hook_post_headers(sess, trace_post_headers, NULL);
 }
 
 /* Allow all certificates. */
@@ -373,9 +479,14 @@ int begin(void)
      * test number and session. */
     ne_hook_pre_send(i_session, i_pre_send, "X-Litmus");
     ne_hook_pre_send(i_session2, i_pre_send, "X-Litmus-Second");
-    
+
+    /* Registered after i_pre_send so that the X-Litmus header is
+     * already in the buffer by the time the request is dumped. */
+    trace_session(i_session, "");
+    trace_session(i_session2, " [second session]");
+
     CALL(make_space());
-    
+
     return OK;
 }
 
@@ -383,7 +494,53 @@ int finish(void)
 {
     ne_session_destroy(i_session);
     ne_session_destroy(i_session2);
+
+    if (trace_fp) {
+        fflush(trace_fp);
+        if (trace_needs_close) fclose(trace_fp);
+        trace_fp = NULL;
+    }
+
     return OK;
+}
+
+/* Returns the directory to use for temporary files.  Windows has no
+ * /tmp, so the environment must be consulted there. */
+static const char *tmp_dir(void)
+{
+    static const char * const vars[] = { "TMPDIR", "TMP", "TEMP" };
+    unsigned n;
+
+    for (n = 0; n < sizeof(vars) / sizeof(vars[0]); n++) {
+        const char *value = getenv(vars[n]);
+
+        if (value && *value) return value;
+    }
+
+#ifdef _WIN32
+    return ".";
+#else
+    return "/tmp";
+#endif
+}
+
+int litmus_tmpfile(char **fname)
+{
+    char *tmpl = ne_concat(tmp_dir(), "/litmus2-XXXXXX", NULL);
+    int fd = mkstemp(tmpl);
+
+    if (fd < 0) {
+        ne_free(tmpl);
+        return -1;
+    }
+
+#if defined(_WIN32) || defined(__CYGWIN__)
+    /* Prevent CRLF translation from corrupting file contents. */
+    setmode(fd, O_BINARY);
+#endif
+
+    *fname = tmpl;
+    return fd;
 }
 
 int put_buffer(ne_session *sess, const char *path, const char *content)

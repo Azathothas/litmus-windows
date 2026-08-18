@@ -49,6 +49,18 @@ AC_SUBST(THREADS_TEST)
 # framework initializer in all builds.
 CPPFLAGS="$CPPFLAGS -I\${top_builddir} -DNEON_TEST_INIT=litmus_init"
 
+dnl The test-common symlink is checked out as a plain file on platforms
+dnl without symlink support (e.g. Windows), so fall back to the real
+dnl directory in the bundled neon when the link is not usable.
+AC_MSG_CHECKING([for test-common directory])
+if test -d ${srcdir}/test-common; then
+  TEST_COMMON=test-common
+else
+  TEST_COMMON=neon/test/common
+fi
+AC_MSG_RESULT([${TEST_COMMON}])
+AC_SUBST(TEST_COMMON)
+
 AC_CONFIG_FILES([litmus], [chmod +x litmus])
 AC_CONFIG_FILES([tests/httpd:tests/httpd.sh], [chmod +x tests/httpd])
 AC_CONFIG_FILES([Makefile neon/src/Makefile])
@@ -65,6 +77,6 @@ AC_MSG_NOTICE([Configured to build AC_PACKAGE_STRING:
 ])
 
 # For VPATH builds
-for d in neon neon/src test-common src; do
-    test -d $d || mkdir $d
+for d in neon neon/src ${TEST_COMMON} src; do
+    test -d $d || mkdir -p $d
 done

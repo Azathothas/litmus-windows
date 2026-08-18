@@ -1,4 +1,0 @@
-reviews:
-  path_filters:
-    - "!config.*"
-    - "!m4/**"

@@ -57,17 +57,27 @@ static void *threadfn(void *varg)
     struct thrarg *arg = varg;
     ne_session *sess;
     unsigned int iter;
-    int fd = open("/dev/zero", O_RDONLY);
+    char *tmp;
+    int put_ret;
+    int fd = litmus_tmpfile(&tmp);
     
-    if (fd < 0) return "open(/dev/zero) failed";
+    if (fd < 0) return "could not create temporary file";
     
     sess = ne_session_create(i_origin.scheme, i_origin.host, i_origin.port);
 
-    if (ne_put(sess, arg->uri.path, fd) != NE_OK)
+    put_ret = ne_put(sess, arg->uri.path, fd);
+
+    /* The temporary file is only needed for the PUT above.  Clean it up
+     * whether or not that succeeded, otherwise a run against a server
+     * that rejects the PUT leaves one stray file behind per thread. */
+    close(fd);
+    unlink(tmp);
+    ne_free(tmp);
+
+    if (put_ret != NE_OK)
         return ne_concat("PUT: ", ne_get_error(sess), NULL);
 
-    close(fd);
-    
+
     for (iter = 0; iter < ITERS; iter++) {
         struct ne_lock *lock = ne_lock_create();
         int ret;

@@ -521,7 +521,13 @@ static int prep_collection(void)
         gotlock = NULL;
     }
     ne_free(res);
-    res = coll = ne_concat(i_path, "lockcoll/", NULL);
+    /* Give 'res' its own allocation rather than aliasing 'coll'.  If a
+     * later test frees 'res' while the two still point at the same
+     * buffer -- which happens whenever lock_collection() fails before
+     * reassigning 'res' -- then 'coll' is left dangling, and the tests
+     * that report it print freed memory. */
+    coll = ne_concat(i_path, "lockcoll/", NULL);
+    res = ne_strdup(coll);
     ONV(ne_mkcol(i_session, res),
         ("MKCOL %s: %s", res, ne_get_error(i_session)));
     return OK;

@@ -1,0 +1,19 @@
+# Expected results for the suites run against wsgidav by tests/wsgidav.sh
+# --check.  Columns: suite passed failed skipped
+#
+# copymove and locks do not reach 100% because wsgidav is not fully
+# RFC 4918 compliant, not because litmus is broken:
+#
+#   copymove/copy_shallow  wsgidav deep-copies a collection when the
+#                          request said Depth: 0.
+#   locks/lock_excl and    wsgidav's LOCK response omits the activelock
+#   the three that follow  element, so litmus cannot read the token and
+#                          the remaining lock tests cannot proceed.
+#
+# Update these numbers only when the change is understood; a difference
+# here means either litmus or the server changed behaviour.
+basic     16 0 0
+copymove  12 1 0
+props     33 0 0
+locks      8 4 28
+http       4 0 0

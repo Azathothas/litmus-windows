@@ -96,13 +96,6 @@ static int adv_options(void)
 
 #endif
 
-/* BINARYMODE() enables binary file I/O on cygwin. */
-#ifdef __CYGWIN__
-#define BINARYMODE(fd) do { setmode(fd, O_BINARY); } while (0)
-#else
-#define BINARYMODE(fd) if (0)
-#endif
-
 static int compare_contents(const char *fn, const char *contents)
 {
     int fd = open(fn, O_RDONLY | O_BINARY), ret;
@@ -142,8 +135,8 @@ static char *pg_uri = NULL;
 
 static int do_put_get(const char *segment)
 {
-    char tmp[] = "/tmp/litmus2-XXXXXX", *uri;
-    int fd;
+    char *tmp, *uri;
+    int fd, get_ret, cmp_ret = 0;
 
     uri = ne_concat(i_path, segment, NULL);
 
@@ -155,16 +148,24 @@ static int do_put_get(const char *segment)
 		  GETSTATUS);
     }
 
-    fd = mkstemp(tmp);
-    BINARYMODE(fd);
-    ONV(ne_get(i_session, uri, fd),
-	("GET of `%s' failed: %s", uri, ne_get_error(i_session)));
+    fd = litmus_tmpfile(&tmp);
+    ONN("could not create temporary file", fd < 0);
+
+    get_ret = ne_get(i_session, uri, fd);
     close(fd);
+    if (get_ret == NE_OK)
+        cmp_ret = compare_contents(tmp, test_contents);
 
-    ONN("PUT/GET byte comparison", compare_contents(tmp, test_contents));
-
-    /* Clean up. */
+    /* Remove the temporary file before reporting either failure below.
+     * The ON* macros return immediately, so cleaning up afterwards
+     * would leave a stray file in the temp directory on every failing
+     * run. */
     unlink(tmp);
+    ne_free(tmp);
+
+    ONV(get_ret,
+	("GET of `%s' failed: %s", uri, ne_get_error(i_session)));
+    ONN("PUT/GET byte comparison", cmp_ret);
 
     /* so delete() isn't skipped. */
     pg_uri = uri;

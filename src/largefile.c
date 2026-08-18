@@ -96,11 +96,9 @@ static int large_put(void)
     ne_request *req = ne_request_create(i_session, "PUT", path);
     int count, ret;
    
-#ifdef NE_LFS
-    ne_set_request_body_provider64(req, TOTALSIZE, provider, &count);
-#else
+    /* ne_off_t is 64-bit for LFS builds; the *64 interfaces were
+     * removed in neon 0.27. */
     ne_set_request_body_provider(req, TOTALSIZE, provider, &count);
-#endif
     
     ret = ne_request_dispatch(req);
 

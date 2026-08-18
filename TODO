@@ -1,10 +1,106 @@
+Start here
+==========
 
-Bugs from Keith/Julian:
-- PROPPATCH response may be 207 with embedded 423, lock tests
-check for 423 directly.  Extend PROPPATCH interface to return
-true ne_status structures for each operation?
+This is a Windows port of litmus (https://github.com/notroj/litmus).
+If you are picking this up cold, read these in order:
 
-Features:
-* add collection locking tests. 
-* add lock-null tests.
-* test for collection creation with %20 space
+  1. README.md    what this fork is, how to build it, how to run it
+  2. AGENT.md     how to use litmus to test a WebDAV server, and how to
+                  read the results; also the JSON schema
+  3. PATCHES.md   what was changed inside neon/ and why, needed before
+                  you update the bundled neon
+  4. This file    what is left to do
+
+Layout:
+
+  src/            the test suites, one .c per suite, plus common.c
+  neon/           vendored neon 0.37.1, checked in, not a submodule
+  neon/test/common/tests.c
+                  the shared harness: result formatting, counters,
+                  JSON output. Patched; see PATCHES.md
+  win32/config.h  generated config.h, checked in so Makefile.w32 works
+                  without autotools
+  tests/          test harnesses (wsgidav.sh for Windows and Unix,
+                  httpd for Unix only) and expected results
+  Makefile.w32    the no-autotools build
+  .github/        CI: both build paths, self-test, release
+
+Before you change anything
+==========================
+
+Run the baseline and note the numbers:
+
+  ./tests/wsgidav.sh --check
+
+It must print "All suites match the expected results". If it does not,
+fix that before doing anything else. Everything below assumes a green
+baseline.
+
+If you touch neon/test/common/tests.c or src/common.c, the default text
+output must stay byte for byte identical. The way to prove that is to
+build the tree twice, once with your change and once without, and diff
+the output of every suite in both default and --quiet mode against the
+same server. Do not skip this. It is the only thing standing between
+this fork and silently breaking every script that parses litmus output.
+
+Outstanding work
+================
+
+Worth doing, in rough priority order.
+
+* The autotools build relinks every executable on every run. The link
+  rules produce targets named "basic", "copymove" and so on, but MinGW
+  gcc writes "basic.exe", so make never sees the target as up to date.
+  Fixing it means putting $(EXEEXT) through the rules, the ALL_TESTS and
+  TESTS lists, the install target and the litmus driver script. It is
+  not hard, but it touches enough of the build to need careful testing
+  on both Windows and Unix. Makefile.w32 does not have this problem.
+
+* Test failure paths leak. Most tests build URLs with ne_concat and
+  return through the ON* macros, which do not free anything. The three
+  cases that left files on disk have been fixed (src/basic.c,
+  src/lockbomb.c) because those littered the temp directory on every
+  failing run. The remaining leaks are memory only, in a process that
+  is about to exit, so they are untidy rather than harmful. Cleaning
+  them up properly means a cleanup path per test.
+
+* threadfn() in src/lockbomb.c returns early on error without calling
+  ne_session_destroy(). Same category as above.
+
+* --trace does not cover the lockbomb worker threads. They create their
+  own sessions in threadfn() rather than using i_session, so the trace
+  hooks are never attached. Tracing 400,000 lock/unlock round trips
+  would not be useful anyway, but writing to one FILE from 20 threads
+  would need locking, so this is deliberate. Say so if anyone asks.
+
+* CI rebuilds the wsgidav virtualenv on every run. Caching it with
+  actions/cache would save about half a minute per job. Low value while
+  the job is this short.
+
+* Upstream's TODO listed these, and they are still open upstream. They
+  are test coverage rather than portability, so they belong upstream
+  rather than here:
+    - PROPPATCH may return 207 with an embedded 423; the lock tests
+      check for 423 directly. Extending the PROPPATCH interface to
+      return an ne_status per operation would let them check properly.
+    - lock-null resource tests.
+    - collection creation with a %20 space in the name.
+
+Things that were looked at and deliberately not done
+====================================================
+
+* Merging the tolsen fork's tests, requested in upstream issue 8. See
+  the "What was not changed" section of README.md for the reasoning.
+
+* Connection reuse was measured, in case it was a performance problem.
+  It is not: a props run makes 36 requests over one TCP connection. The
+  slowest tests are copy_coll and move_coll in copymove, at about two
+  seconds each, and that time is the server copying a collection, not
+  litmus. There is nothing to win on the client side.
+
+* Prefixing message bodies in the --trace output the way request and
+  response headers are prefixed. Bodies are dumped by neon inside
+  square brackets instead. That is better, not worse: PROPFIND and LOCK
+  bodies are XML, so nearly every line starts with "<", which is also
+  the response-header prefix. The brackets keep the boundary
+  unambiguous.

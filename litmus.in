@@ -22,7 +22,12 @@ Options:
  -q, --quiet                use abbreviated output
  -n, --no-colour            disable colour in output
  -o, --colour               enable colour in output
- 
+ -j, --json                 write results to stdout as one JSON object
+                            per suite, one per line
+ -v, --verbose              write the protocol trace to stderr
+ -t, --trace[=FILE]         dump every request and response to FILE
+                            (default stderr; use - for stdout)
+
 Significant environment variables:
 
     \$TESTS     - specify test programs to run

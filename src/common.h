@@ -32,6 +32,12 @@
 #define O_BINARY (0)
 #endif
 
+/* Creates and opens a temporary file, returning the fd, or -1 on error.
+ * The filename is stored in *fname, and must be ne_free()d by the caller.
+ * $TMPDIR/$TMP/$TEMP are honoured since Windows has no /tmp; the fd is
+ * always in binary mode. */
+int litmus_tmpfile(char **fname);
+
 /* prototype a test function. */
 #define TF(x) int x(void)
 
