@@ -51,7 +51,7 @@ const struct litmus_suite litmus_suites[] = {
       "HTTP-level behaviour, currently Expect: 100-continue",
       1, 0 },
     { "largefile", largefile_tests,
-      "a 2147549184 byte (2 GiB) PUT followed by a GET",
+      "a 2147549184 byte (2.0 GiB) PUT followed by a GET",
       0, 0 },
     { "protected", protected_tests,
       "every method must be refused on a protected metadata collection",

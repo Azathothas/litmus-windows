@@ -36,7 +36,7 @@ curl -fsSL -o litmus-cli.exe https://github.com/Azathothas/litmus-windows/releas
 Invoke-WebRequest https://github.com/Azathothas/litmus-windows/releases/latest/download/litmus-cli.exe -OutFile litmus-cli.exe
 ```
 
-It is a statically linked x86_64 Windows executable, 8595548 bytes
+It is a statically linked x86_64 Windows executable, 8610579 bytes
 (8.2 MiB). It needs no MSYS2, no OpenSSL DLLs and no expat DLLs. There
 is no installer and nothing to configure:
 

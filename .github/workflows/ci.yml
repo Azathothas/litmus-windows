@@ -162,14 +162,6 @@ jobs:
           path: dav-venv
           key: dav-venv-${{ runner.os }}-${{ hashFiles('tests/wsgidav.sh') }}
 
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/AppData/Local/go-build
-          key: go-${{ runner.os }}-${{ hashFiles('tests/godav/go.sum') }}
-          restore-keys: go-${{ runner.os }}-
-
       - name: Check the suites against wsgidav
         run: ./tests/wsgidav.sh --check
         env:
