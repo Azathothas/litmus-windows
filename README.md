@@ -167,6 +167,22 @@ On the first run it creates a virtualenv in `dav-venv` and installs
 and network access. Later runs reuse the virtualenv. Server data goes in
 `davroot`. Both directories are gitignored.
 
+It needs a **native Windows Python**, from
+<https://www.python.org/downloads/> or the Microsoft Store. An MSYS2
+shell has a minimal `PATH` that leaves out the Windows one, so the
+script also looks in the usual install locations and normally finds it
+without help. If it does not, say where it is:
+
+```bash
+PYTHON=/c/Python313/python.exe ./tests/wsgidav.sh
+```
+
+Do not install MSYS2's own `python` package for this. It works fine as a
+Python, but wsgidav depends on `bcrypt`, which has no mingw wheel and
+tries to build from source, which needs a Rust toolchain. The script
+detects an MSYS2 python and skips over it rather than failing halfway
+through a pip install.
+
 To check the results against known-good numbers instead of just printing
 them:
 

@@ -40,20 +40,68 @@ if [ "${1-}" = "--check" ]; then
     shift
 fi
 
-# Probe candidates by running them, not just by looking them up on
-# PATH: on Windows "python3" is usually a Microsoft Store stub that
-# exists, resolves, and then refuses to run.
+# Returns success if $1 is an interpreter this script can use.
+#
+# Running it is the only reliable test.  On Windows "python3" is usually
+# a Microsoft Store stub that exists, resolves, and then refuses to run,
+# and "py" is a launcher that is present even when no interpreter is
+# registered with it.
+#
+# An MSYS2 python is rejected on purpose: it runs perfectly well, but
+# wsgidav depends on bcrypt, which has no mingw wheel and needs a Rust
+# toolchain to build from source.  sysconfig.get_platform() reports
+# mingw_x86_64_ucrt_gnu there against win-amd64 for a native Python.
+usable_python() {
+    plat=`"$1" -c "import sysconfig; print(sysconfig.get_platform())" 2>/dev/null` \
+        || return 1
+    case $plat in
+        mingw*) return 1 ;;
+        "")     return 1 ;;
+        *)      return 0 ;;
+    esac
+}
+
 if [ -z "${PYTHON-}" ]; then
     for candidate in python3 python py; do
-        if "$candidate" -c "import sys; sys.exit(0)" >/dev/null 2>&1; then
+        if usable_python "$candidate"; then
             PYTHON=$candidate
             break
         fi
     done
 fi
 
+# An MSYS2 shell started from the Start menu has a minimal PATH that
+# leaves out the Windows one, so a usable Python can be sitting in the
+# normal place and still not be found above.  Look there before giving
+# up.
+if [ -z "${PYTHON-}" ] && command -v cygpath >/dev/null 2>&1; then
+    for base in "${LOCALAPPDATA-}\\Programs\\Python" "${PROGRAMFILES-}" "C:\\"; do
+        [ -n "$base" ] || continue
+        dir=`cygpath -u "$base" 2>/dev/null` || continue
+        [ -d "$dir" ] || continue
+        for candidate in "$dir"/Python3*/python.exe "$dir"/Python*/python.exe; do
+            if [ -x "$candidate" ] && usable_python "$candidate"; then
+                PYTHON=$candidate
+                echo "-- Using $candidate --"
+                break 2
+            fi
+        done
+    done
+fi
+
 if [ -z "${PYTHON-}" ]; then
-    echo "wsgidav.sh: no working python interpreter found; set \$PYTHON." >&2
+    cat >&2 <<'MSG'
+wsgidav.sh: no working Python interpreter found.
+
+This script needs a native Windows Python (or any Python on Unix). If
+one is installed but not on PATH, point at it directly:
+
+    PYTHON=/c/Python313/python.exe ./tests/wsgidav.sh
+
+Do not use MSYS2's own python here: wsgidav pulls in bcrypt, which has
+no mingw wheel and needs Rust to build. Install Python from
+https://www.python.org/downloads/ if you have none.
+MSG
     exit 1
 fi
 
