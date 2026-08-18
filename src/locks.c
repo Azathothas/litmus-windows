@@ -111,8 +111,9 @@ static int lock_shared(void)
 static int notowner_modify(void)
 {
     char *tmp;
+    int ppstatus;
     ne_propname pname = { "http://webdav.org/neon/litmus/", "random" };
-    ne_proppatch_operation pops[] = { 
+    ne_proppatch_operation pops[] = {
 	{ NULL, ne_propset, "foobar" },
 	{ NULL }
     };
@@ -141,11 +142,14 @@ static int notowner_modify(void)
     if (STATUS2(423))
 	t_warning("COPY failed with %d not 423", GETSTATUS2);
 
+    /* A server may refuse this with a 423 response, or with a 207
+     * whose propstat says 423; litmus_proppatch() reports whichever
+     * the server chose. */
     ONN("PROPPATCH of locked resource should fail",
-	ne_proppatch(i_session2, res, pops) != NE_ERROR);
-    
-    if (STATUS2(423))
-	t_warning("PROPPATCH failed with %d not 423", GETSTATUS2);
+	litmus_proppatch(i_session2, res, pops, &ppstatus) != NE_ERROR);
+
+    if (ppstatus != 423)
+	t_warning("PROPPATCH failed with %d not 423", ppstatus);
 
     ONN("PUT on locked resource should fail",
 	dummy_put(i_session2, res) != NE_ERROR);
@@ -583,6 +587,208 @@ static int unmapped_lock(void)
     return OK;
 }
 
+/* Locking an unmapped URL creates a resource, so these tests check
+ * what that resource is: RFC 4918 replaced the lock-null resource of
+ * RFC 2518 with an ordinary empty resource, and the two are
+ * distinguishable from the outside. */
+
+static struct ne_lock nulllock;
+static struct ne_lock *gotnulllock;
+static char *nullres;
+
+struct propfind_ctx {
+    int found;                  /* responses seen */
+    const char *want;           /* path a response must match, or NULL */
+    int matched;                /* responses matching 'want' */
+    char *length;               /* getcontentlength of the last response */
+    int is_collection;
+};
+
+static const ne_propname prop_length = { "DAV:", "getcontentlength" };
+static const ne_propname prop_restype = { "DAV:", "resourcetype" };
+
+static void propfind_results(void *userdata, const ne_uri *uri,
+                             const ne_prop_result_set *set)
+{
+    struct propfind_ctx *ctx = userdata;
+    const char *value;
+
+    ctx->found++;
+
+    if (ctx->want && uri->path && strcmp(uri->path, ctx->want) == 0)
+        ctx->matched++;
+
+    value = ne_propset_value(set, &prop_length);
+    if (value) {
+        if (ctx->length) ne_free(ctx->length);
+        ctx->length = ne_strdup(value);
+    }
+
+    /* ne_simple_propfind flattens the value, so a collection shows up
+     * as a resourcetype whose content is non-empty. */
+    value = ne_propset_value(set, &prop_restype);
+    if (value && strstr(value, "collection") != NULL)
+        ctx->is_collection = 1;
+}
+
+static void propfind_ctx_free(struct propfind_ctx *ctx)
+{
+    if (ctx->length) {
+        ne_free(ctx->length);
+        ctx->length = NULL;
+    }
+}
+
+/* LOCK an unmapped URL, then check the resource that creates.
+ * [RFC4918:S7.3] */
+static int locknull(void)
+{
+    struct propfind_ctx ctx = {0};
+    ne_request *req;
+    int ret;
+
+    PRECOND(i_class2);
+
+    nullres = ne_concat(i_path, "locknull", NULL);
+
+    /* Make sure it really is unmapped. */
+    (void) ne_delete(i_session, nullres);
+
+    memset(&nulllock, 0, sizeof nulllock);
+    ne_fill_server_uri(i_session, &nulllock.uri);
+    nulllock.uri.path = ne_strdup(nullres);
+    nulllock.depth = NE_DEPTH_ZERO;
+    nulllock.scope = ne_lockscope_exclusive;
+    nulllock.type = ne_locktype_write;
+    nulllock.timeout = 3600;
+    nulllock.owner = ne_strdup("litmus test suite");
+
+    /* unmapped_lock above is the test for whether a LOCK of an
+     * unmapped URL works at all; there is nothing to learn from
+     * failing that twice, so these tests only look at the resource it
+     * leaves behind. */
+    if (ne_lock(i_session, &nulllock)) {
+        t_context("LOCK on `%s' failed: %s", nullres,
+                  ne_get_error(i_session));
+        ne_free(nulllock.uri.path);
+        nulllock.uri.path = NULL;
+        return SKIP;
+    }
+
+    gotnulllock = ne_lock_copy(&nulllock);
+    ne_lockstore_add(store, gotnulllock);
+
+    if (STATUS(201))
+        t_warning("LOCK creating a resource gave %d not 201 [RFC4918:S7.3]",
+                  GETSTATUS);
+
+    /* The resource must now exist, and must not be a collection. */
+    ctx.want = nullres;
+    ret = ne_simple_propfind(i_session, nullres, NE_DEPTH_ZERO, NULL,
+                             propfind_results, &ctx);
+    if (ret) {
+        propfind_ctx_free(&ctx);
+        t_context("PROPFIND on locked unmapped URL `%s' failed: %s\n"
+                  "a LOCK of an unmapped URL must create a resource "
+                  "[RFC4918:S7.3]", nullres, ne_get_error(i_session));
+        return FAIL;
+    }
+
+    ONV(ctx.found == 0,
+        ("PROPFIND on `%s' returned no resource; the LOCK must have "
+         "created one [RFC4918:S7.3]", nullres));
+
+    ONV(ctx.is_collection,
+        ("LOCK of unmapped URL `%s' created a collection, must create a "
+         "non-collection resource [RFC4918:S7.3]", nullres));
+
+    if (ctx.length && strcmp(ctx.length, "0") != 0)
+        t_warning("resource created by LOCK has getcontentlength %s, "
+                  "should be 0 [RFC4918:S7.3]", ctx.length);
+
+    propfind_ctx_free(&ctx);
+
+    /* GET must work on it, and give nothing back.  A 404 here is the
+     * RFC 2518 lock-null resource, which RFC 4918 replaced. */
+    req = ne_request_create(i_session, "GET", nullres);
+    ret = ne_request_dispatch(req);
+    if (ret == NE_OK) {
+        int code = ne_get_status(req)->code;
+        int klass = ne_get_status(req)->klass;
+
+        if (code == 404)
+            t_warning("GET on the resource created by LOCK gave 404; this is "
+                      "the RFC2518 lock-null resource, replaced by an empty "
+                      "resource in [RFC4918:S7.3]");
+        else if (klass != 2)
+            t_warning("GET on the resource created by LOCK gave %d, "
+                      "should be 200 [RFC4918:S7.3]", code);
+    }
+    else {
+        t_warning("GET on the resource created by LOCK failed: %s",
+                  ne_get_error(i_session));
+    }
+    ne_request_destroy(req);
+
+    return OK;
+}
+
+/* The resource created by a LOCK must be listed by its parent
+ * collection, so that a client can find it. */
+static int locknull_discover(void)
+{
+    struct propfind_ctx ctx = {0};
+    int ret;
+
+    PRECOND(gotnulllock);
+
+    ctx.want = nullres;
+    ret = ne_simple_propfind(i_session, i_path, NE_DEPTH_ONE, NULL,
+                             propfind_results, &ctx);
+
+    ONV(ret, ("PROPFIND with Depth: 1 on `%s' failed: %s", i_path,
+              ne_get_error(i_session)));
+
+    if (ctx.matched == 0)
+        t_warning("`%s' was not listed in its parent collection; the "
+                  "resource created by a LOCK is an ordinary resource "
+                  "[RFC4918:S7.3]", nullres);
+
+    propfind_ctx_free(&ctx);
+
+    return OK;
+}
+
+/* Unlocking must not take the resource with it, and it must then be
+ * deletable like any other. */
+static int locknull_unlock(void)
+{
+    struct propfind_ctx ctx = {0};
+    int ret;
+
+    PRECOND(gotnulllock);
+
+    ONMREQ("UNLOCK", nullres, ne_unlock(i_session, gotnulllock));
+    ne_lockstore_remove(store, gotnulllock);
+    ne_lock_destroy(gotnulllock);
+    gotnulllock = NULL;
+
+    ret = ne_simple_propfind(i_session, nullres, NE_DEPTH_ZERO, NULL,
+                             propfind_results, &ctx);
+    propfind_ctx_free(&ctx);
+
+    if (ret) {
+        t_warning("`%s' disappeared when its lock was removed; an empty "
+                  "locked resource should not [RFC4918:S7.3]", nullres);
+        return OK;
+    }
+
+    ONMREQ("DELETE of the resource left by LOCK", nullres,
+           ne_delete(i_session, nullres));
+
+    return OK;
+}
+
 ne_test locks_tests[] = {
     INIT_TESTS,
 
@@ -644,6 +850,11 @@ ne_test locks_tests[] = {
     /* lock on a unmapped url */
     T(unmapped_lock),
     T(unlock),
+
+    /* what a LOCK of an unmapped URL leaves behind */
+    T(locknull),
+    T(locknull_discover),
+    T(locknull_unlock),
 
     FINISH_TESTS
 };

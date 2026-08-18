@@ -23,6 +23,7 @@
 #include <ne_session.h>
 #include <ne_request.h>
 #include <ne_basic.h>
+#include <ne_props.h>  /* for ne_proppatch_operation */
 #include <ne_socket.h> /* for ne_sock_addr */
 
 #include "tests.h"
@@ -99,6 +100,18 @@ extern int i_class2; /* true if server is a class 2 DAV server. */
 /* Upload htdocs/foo to i_path + path */
 int upload_foo(const char *path);
 
+/* The body upload_foo() writes. */
+extern const char litmus_foo_content[];
+
+/* GETs 'path' into a NUL-terminated buffer, which the caller frees.
+ * *len, if non-NULL, receives the length excluding that NUL.  Returns
+ * NE_OK, or an neon error code with *body left NULL. */
+int litmus_fetch(ne_session *sess, const char *path, char **body, size_t *len);
+
+/* GETs 'path' and compares it byte for byte with 'expected'.  Returns
+ * NE_OK if they match, NE_ERROR if the GET failed or they differ. */
+int litmus_compare(ne_session *sess, const char *path, const char *expected);
+
 /* Returns etag of resource at path within i_session */
 char *get_etag(const char *path);
 
@@ -109,6 +122,19 @@ int dummy_put(ne_session *sess, const char *path);
 /* PUT request to 'path' with request body NUL-terminated string
  * 'content'. */
 int put_buffer(ne_session *sess, const char *path, const char *content);
+
+/* PROPPATCH 'ops' on 'path', returning NE_OK or NE_ERROR as
+ * ne_proppatch() does.
+ *
+ * If 'status' is non-NULL it receives the status the server really
+ * reported for the resource: the response status, or, when that was a
+ * 207, the first non-2xx status carried inside the multistatus body.
+ * RFC 4918 allows a server to refuse a PROPPATCH either way, and a
+ * test that reads only the response status sees 207 and cannot tell
+ * what happened.  The session error string is set to that status too,
+ * so GETSTATUS agrees with it. */
+int litmus_proppatch(ne_session *sess, const char *path,
+                     const ne_proppatch_operation *ops, int *status);
 
 /* for method 'method' on 'uri', do operation 'x'. */
 #define ONMREQ(method, uri, x) do { int _ret = (x); if (_ret) { t_context("%s on `%s': %s", method, uri, ne_get_error(i_session)); return FAIL; } } while (0)

@@ -29,6 +29,8 @@
 
 #include <ne_request.h>
 #include <ne_string.h>
+#include <ne_uri.h>
+#include <ne_props.h>
 
 #include "common.h"
 
@@ -297,7 +299,12 @@ static int mkcol(void)
     
     ONV(ne_mkcol(i_session, uri),
 	("MKCOL %s: %s", uri, ne_get_error(i_session)));
-    
+
+    if (STATUS(201)) {
+	t_warning("MKCOL of new collection gave %d, should be 201 "
+		  "[RFC4918:S9.3.1]", GETSTATUS);
+    }
+
     coll_uri = uri; /* for subsequent tests. */
 
     return OK;
@@ -327,6 +334,11 @@ static int delete_coll(void)
 	("DELETE on collection `%s': %s", coll_uri, 
 	 ne_get_error(i_session)));
 
+    if (STATUS(204)) {
+	t_warning("DELETE of collection gave %d, should be 204 "
+		  "[RFC9110:S9.3.5]", GETSTATUS);
+    }
+
     return OK;
 }
 
@@ -343,6 +355,86 @@ static int mkcol_no_parent(void)
         ("MKCOL with missing intermediate collection gave %d, "
          "MUST be 409 [RFC4918:S9.3]", GETSTATUS));
 
+    ne_free(uri);
+
+    return OK;
+}
+
+/* Collects the paths a PROPFIND reported, so that a name sent escaped
+ * can be checked for coming back the same way.  ne_uri_parse() does
+ * not unescape, so these are compared as they went over the wire. */
+struct listing {
+    const char *want;           /* escaped path being looked for */
+    int found;                  /* responses seen */
+    int matched;                /* responses whose path matched */
+    char *other;                /* first path that did not match */
+};
+
+static void listing_results(void *userdata, const ne_uri *uri,
+                            const ne_prop_result_set *set)
+{
+    struct listing *ctx = userdata;
+
+    ctx->found++;
+
+    if (uri->path == NULL) return;
+
+    if (strcmp(uri->path, ctx->want) == 0)
+        ctx->matched++;
+    else if (ctx->other == NULL)
+        ctx->other = ne_strdup(uri->path);
+}
+
+/* A collection whose name contains a space, sent percent-escaped.  The
+ * server must decode it, address the collection by the same escaped
+ * URI afterwards, and escape the space again in the hrefs it returns
+ * [RFC4918:S8.3]. */
+static int mkcol_percent_20(void)
+{
+    struct listing ctx = {0};
+    char *uri = ne_concat(i_path, "space%20coll/", NULL);
+    char *child = ne_concat(uri, "res", NULL);
+    int ret;
+
+    /* Leftovers from an earlier run would make the MKCOL a 405. */
+    (void) ne_delete(i_session, uri);
+
+    ONV(ne_mkcol(i_session, uri),
+        ("MKCOL `%s': %s", uri, ne_get_error(i_session)));
+
+    /* The same escaped URI must address the collection just created. */
+    ctx.want = uri;
+    ret = ne_simple_propfind(i_session, uri, NE_DEPTH_ZERO, NULL,
+                             listing_results, &ctx);
+    ONV(ret, ("PROPFIND on `%s' failed: %s", uri,
+              ne_get_error(i_session)));
+    ONV(ctx.found == 0,
+        ("PROPFIND on `%s' returned no resource", uri));
+
+    if (ctx.matched == 0)
+        t_warning("PROPFIND on `%s' returned href `%s'; the space must be "
+                  "escaped in the response [RFC4918:S8.3]", uri,
+                  ctx.other ? ctx.other : "");
+
+    if (ctx.other) ne_free(ctx.other);
+
+    /* The escaped URI must still name that one collection. */
+    ONV(ne_mkcol(i_session, uri) != NE_ERROR,
+        ("second MKCOL on `%s' succeeded; the first one should have "
+         "created it [RFC4918:S9.3.1]", uri));
+
+    if (STATUS(405))
+        t_warning("MKCOL on the existing `%s' gave %d, should be 405 "
+                  "[RFC4918:S9.3.2]", uri, GETSTATUS);
+
+    /* And it must behave like any other collection. */
+    ONV(put_buffer(i_session, child, test_contents),
+        ("PUT of `%s' failed: %s", child, ne_get_error(i_session)));
+
+    ONV(ne_delete(i_session, uri),
+        ("DELETE of `%s' failed: %s", uri, ne_get_error(i_session)));
+
+    ne_free(child);
     ne_free(uri);
 
     return OK;
@@ -393,6 +485,7 @@ ne_test basic_tests[] = {
     T(mkcol_again),
     T(delete_coll),
     T(mkcol_no_parent),
+    T(mkcol_percent_20),
     T(mkcol_with_body),
 
     FINISH_TESTS

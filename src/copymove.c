@@ -65,6 +65,41 @@ static int copy_simple(void)
     return OK;
 }
 
+/* A COPY must reproduce the body, not just create something at the
+ * destination [RFC4918:S9.8].  Self-contained so that it does not
+ * disturb the sequence of tests around it. */
+static int copy_content(void)
+{
+    char *csrc = ne_concat(i_path, "cpcontent-src", NULL);
+    char *cdest = ne_concat(i_path, "cpcontent-dest", NULL);
+    int ret;
+
+    PRECOND(copy_ok);
+
+    CALL(upload_foo("cpcontent-src"));
+    ne_delete(i_session, cdest);
+
+    ONM2REQ("COPY", csrc, cdest,
+            ne_copy(i_session, 0, NE_DEPTH_ZERO, csrc, cdest));
+
+    ret = litmus_compare(i_session, cdest, litmus_foo_content);
+    ONV(ret, ("COPY destination `%s' does not have the source body: %s",
+              cdest, ne_get_error(i_session)));
+
+    /* The source must be left alone. */
+    ret = litmus_compare(i_session, csrc, litmus_foo_content);
+    ONV(ret, ("COPY changed the source `%s': %s", csrc,
+              ne_get_error(i_session)));
+
+    ne_delete(i_session, csrc);
+    ne_delete(i_session, cdest);
+
+    ne_free(csrc);
+    ne_free(cdest);
+
+    return OK;
+}
+
 static int copy_overwrite(void)
 {
     PRECOND(copy_ok);
@@ -309,6 +344,41 @@ static char *mdest, *msrc, *mdest2, *mnoncoll;
 
 #define SERR (ne_get_error(i_session))
 
+/* A MOVE must carry the body across and leave nothing behind
+ * [RFC4918:S9.9]. */
+static int move_content(void)
+{
+    char *msrc2 = ne_concat(i_path, "mvcontent-src", NULL);
+    char *mdst = ne_concat(i_path, "mvcontent-dest", NULL);
+    char *body = NULL;
+    int ret;
+
+    CALL(upload_foo("mvcontent-src"));
+    ne_delete(i_session, mdst);
+
+    ONM2REQ("MOVE", msrc2, mdst, ne_move(i_session, 0, msrc2, mdst));
+
+    ret = litmus_compare(i_session, mdst, litmus_foo_content);
+    ONV(ret, ("MOVE destination `%s' does not have the source body: %s",
+              mdst, ne_get_error(i_session)));
+
+    ret = litmus_fetch(i_session, msrc2, &body, NULL);
+    if (body) ne_free(body);
+    ONV(ret == NE_OK,
+        ("GET of `%s' succeeded after it was MOVEd away", msrc2));
+
+    ONV(STATUS(404),
+        ("GET of `%s' after MOVE gave %d, should be 404 [RFC4918:S9.9]",
+         msrc2, GETSTATUS));
+
+    ne_delete(i_session, mdst);
+
+    ne_free(msrc2);
+    ne_free(mdst);
+
+    return OK;
+}
+
 static int move_coll(void)
 {
     int n;
@@ -386,14 +456,14 @@ ne_test copymove_tests[] = {
 
     /*** Copy/move tests. ***/
     T(copy_init),
-    T(copy_simple), T(copy_overwrite),
+    T(copy_simple), T(copy_content), T(copy_overwrite),
     T(copy_abspath),
     T(copy_nodestcoll), 
     T(copy_cleanup), 
 
     T(copy_coll), T(copy_shallow),
 
-    T(move), T(move_coll), T(move_cleanup),
+    T(move), T(move_content), T(move_coll), T(move_cleanup),
 
     FINISH_TESTS
 };

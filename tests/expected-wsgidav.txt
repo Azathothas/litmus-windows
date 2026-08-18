@@ -6,14 +6,19 @@
 #
 #   copymove/copy_shallow  wsgidav deep-copies a collection when the
 #                          request said Depth: 0.
-#   locks/lock_excl and    wsgidav's LOCK response omits the activelock
-#   the three that follow  element, so litmus cannot read the token and
-#                          the remaining lock tests cannot proceed.
+#   locks/lock_excl and    wsgidav answers LOCK with the Content-Type
+#   the three that follow  "application; charset=utf-8", which is not a
+#                          media type at all and not an XML one, so the
+#                          body is discarded unparsed and litmus never
+#                          sees the activelock element or the lock
+#                          token.  Everything downstream of holding a
+#                          lock is then skipped, including the three
+#                          lock-null tests.
 #
 # Update these numbers only when the change is understood; a difference
 # here means either litmus or the server changed behaviour.
-basic     16 0 0
-copymove  12 1 0
+basic     17 0 0
+copymove  14 1 0
 props     33 0 0
-locks      8 4 28
+locks      8 4 31
 http       4 0 0

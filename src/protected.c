@@ -394,15 +394,19 @@ static int proppatch(void)
         { NULL }
     };
 
+    int status;
+
     PRECOND(prot_ok);
 
+    /* A refusal may come back as a plain error status or as a 207
+     * carrying the real status per property, so the status compared
+     * here is whichever the server used. */
     ONN("PROPPATCH on protected resource should be rejected",
-        ne_proppatch(i_session, prot_path, pops) != NE_ERROR);
+        litmus_proppatch(i_session, prot_path, pops, &status) != NE_ERROR);
 
-    ONV(GETSTATUS != 403 && GETSTATUS != 405 && GETSTATUS != 404
-        && GETSTATUS != 501 && GETSTATUS != 207,
+    ONV(status != 403 && status != 405 && status != 404 && status != 501,
         ("PROPPATCH on protected resource gave %d, expected error",
-         GETSTATUS));
+         status));
 
     return OK;
 }
@@ -415,15 +419,16 @@ static int proppatch_coll(void)
         { NULL }
     };
 
+    int status;
+
     PRECOND(prot_ok);
 
     ONN("PROPPATCH on protected collection should be rejected",
-        ne_proppatch(i_session, prot_coll, pops) != NE_ERROR);
+        litmus_proppatch(i_session, prot_coll, pops, &status) != NE_ERROR);
 
-    ONV(GETSTATUS != 403 && GETSTATUS != 405 && GETSTATUS != 404
-        && GETSTATUS != 501 && GETSTATUS != 207,
+    ONV(status != 403 && status != 405 && status != 404 && status != 501,
         ("PROPPATCH on protected collection gave %d, expected error",
-         GETSTATUS));
+         status));
 
     return OK;
 }

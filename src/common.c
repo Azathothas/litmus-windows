@@ -41,6 +41,9 @@
 #include <ne_locks.h>
 #include <ne_string.h>
 #include <ne_alloc.h>
+#include <ne_207.h>
+#include <ne_xml.h>
+#include <ne_xmlreq.h>
 
 #include "getopt.h"
 
@@ -673,7 +676,128 @@ int dummy_put(ne_session *sess, const char *path)
     return put_buffer(sess, path, "zero");
 }
 
-static const char foo_content[] =
+/* State for litmus_proppatch(): the status the server reported for the
+ * resource, whether at the response level or inside a multistatus. */
+struct proppatch_ctx {
+    int response;               /* status of the HTTP response */
+    int embedded;               /* first non-2xx status inside a 207 */
+    char *reason;               /* its reason phrase, may be NULL */
+};
+
+/* Records the first non-2xx status found in the multistatus body.  A
+ * 424 means "this would have worked but something else failed", so it
+ * never carries the reason and is skipped, as neon does. */
+static void note_status(struct proppatch_ctx *ctx, const ne_status *status)
+{
+    if (status && status->klass != 2 && status->code != 424
+        && ctx->embedded == 0) {
+        ctx->embedded = status->code;
+        if (status->reason_phrase)
+            ctx->reason = ne_strdup(status->reason_phrase);
+    }
+}
+
+static void *pp_start_response(void *userdata, const ne_uri *uri)
+{
+    return NULL;
+}
+
+static void pp_end_response(void *userdata, void *response,
+                            const ne_status *status, const char *description)
+{
+    note_status(userdata, status);
+}
+
+static void pp_end_propstat(void *userdata, void *propstat,
+                            const ne_status *status, const char *description)
+{
+    note_status(userdata, status);
+}
+
+int litmus_proppatch(ne_session *sess, const char *path,
+                     const ne_proppatch_operation *ops, int *status)
+{
+    ne_request *req = ne_request_create(sess, "PROPPATCH", path);
+    ne_buffer *body = ne_buffer_create();
+    struct proppatch_ctx ctx = {0};
+    ne_xml_parser *parser = ne_xml_create();
+    ne_207_parser *p207;
+    ne_uri base = {0};
+    const ne_status *st;
+    int n, ret;
+
+    /* The request body is built exactly as ne_proppatch() builds it,
+     * so that this differs from that function only in what it reports
+     * back. */
+    ne_buffer_czappend(body, "<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+                       "<D:propertyupdate xmlns:D=\"DAV:\">");
+
+    for (n = 0; ops[n].name != NULL; n++) {
+        const char *elm = (ops[n].type == ne_propset) ? "set" : "remove";
+
+        ne_buffer_concat(body, "<D:", elm, "><D:prop>",
+                         "<", ops[n].name->name, NULL);
+
+        if (ops[n].name->nspace)
+            ne_buffer_concat(body, " xmlns=\"", ops[n].name->nspace, "\"",
+                             NULL);
+
+        if (ops[n].type == ne_propset)
+            ne_buffer_concat(body, ">", ops[n].value, NULL);
+        else
+            ne_buffer_append(body, ">", 1);
+
+        ne_buffer_concat(body, "</", ops[n].name->name, "></D:prop></D:", elm,
+                         ">\n", NULL);
+    }
+
+    ne_buffer_czappend(body, "</D:propertyupdate>\n");
+
+    ne_set_request_body_buffer(req, body->data, ne_buffer_size(body));
+    ne_add_request_header(req, "Content-Type", NE_XML_MEDIA_TYPE);
+
+    ne_lock_using_resource(req, path, NE_DEPTH_ZERO);
+
+    ne_fill_server_uri(sess, &base);
+    base.path = ne_strdup("/");
+    p207 = ne_207_create(parser, &base, &ctx);
+    ne_uri_free(&base);
+
+    ne_207_set_response_handlers(p207, pp_start_response, pp_end_response);
+    ne_207_set_propstat_handlers(p207, NULL, pp_end_propstat);
+
+    ret = ne_xml_dispatchif_request(req, parser, ne_accept_207, NULL);
+
+    st = ne_get_status(req);
+    ctx.response = st->code;
+
+    if (ret == NE_OK) {
+        if (ctx.embedded) {
+            /* Report the embedded status the way a status line reads,
+             * so that GETSTATUS and ne_get_error() see what the server
+             * meant rather than the 207 wrapper around it. */
+            ne_set_error(sess, "%d %s", ctx.embedded,
+                         ctx.reason ? ctx.reason : "");
+            ret = NE_ERROR;
+        }
+        else if (st->klass != 2) {
+            ret = NE_ERROR;
+        }
+    }
+
+    if (status)
+        *status = ctx.embedded ? ctx.embedded : ctx.response;
+
+    if (ctx.reason) ne_free(ctx.reason);
+    ne_207_destroy(p207);
+    ne_xml_destroy(parser);
+    ne_buffer_destroy(body);
+    ne_request_destroy(req);
+
+    return ret;
+}
+
+const char litmus_foo_content[] =
     "This\nis\na\ntest\nfile\ncalled\nfoo\n";
 
 int upload_foo(const char *path)
@@ -681,9 +805,70 @@ int upload_foo(const char *path)
     char *uri = ne_concat(i_path, path, NULL);
     int ret;
 
-    ret = put_buffer(i_session, uri, foo_content);
+    ret = put_buffer(i_session, uri, litmus_foo_content);
 
     ne_free(uri);
+    return ret;
+}
+
+int litmus_fetch(ne_session *sess, const char *path, char **body, size_t *len)
+{
+    ne_request *req = ne_request_create(sess, "GET", path);
+    ne_buffer *buf = ne_buffer_create();
+    char block[BUFSIZ];
+    ssize_t bytes;
+    int ret;
+
+    ret = ne_begin_request(req);
+    if (ret == NE_OK) {
+        if (ne_get_status(req)->klass != 2) {
+            /* Read the body out so that the connection stays usable,
+             * then report the status as an error. */
+            ne_discard_response(req);
+            ne_end_request(req);
+            ret = NE_ERROR;
+        }
+        else {
+            while ((bytes = ne_read_response_block(req, block,
+                                                   sizeof block)) > 0)
+                ne_buffer_append(buf, block, (size_t)bytes);
+
+            if (bytes < 0)
+                ret = NE_ERROR;
+            else
+                ret = ne_end_request(req);
+        }
+    }
+
+    if (ret == NE_OK) {
+        if (len) *len = ne_buffer_size(buf);
+        *body = ne_buffer_finish(buf);
+    }
+    else {
+        *body = NULL;
+        if (len) *len = 0;
+        ne_buffer_destroy(buf);
+    }
+
+    ne_request_destroy(req);
+
+    return ret;
+}
+
+int litmus_compare(ne_session *sess, const char *path, const char *expected)
+{
+    char *body = NULL;
+    size_t len = 0, want = strlen(expected);
+    int ret;
+
+    ret = litmus_fetch(sess, path, &body, &len);
+    if (ret != NE_OK) return ret;
+
+    if (len != want || memcmp(body, expected, want) != 0)
+        ret = NE_ERROR;
+
+    ne_free(body);
+
     return ret;
 }
 
