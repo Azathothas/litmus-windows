@@ -127,6 +127,19 @@ int test_now_iso8601(char *buf, size_t buflen);
 /* Writes 'str' to stdout as a quoted JSON string. */
 void test_json_string(const char *str);
 
+/* The request the running test most recently made, and the status the
+ * server answered it with.  A caller that has neon hooks attached feeds
+ * these; the harness attaches them to a failing test in the JSON
+ * output, as a stable machine-readable classification alongside the
+ * human-readable t_context() message.
+ *
+ * t_request_begin() also clears any status recorded for the previous
+ * request, so a request that never gets a response leaves the status
+ * unset rather than reporting the one before it.  Both are cleared at
+ * the start of every test. */
+void t_request_begin(const char *method, const char *path);
+void t_request_status(int status);
+
 /* Provide result context message. */
 void t_context(const char *ctx, ...)
 #ifdef __GNUC__

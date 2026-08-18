@@ -33,6 +33,11 @@ Changes in version 0.18-win2:
   --read-timeout, --no-keepalive, and --threads for lockbomb.
 * The fork version lives in one file, VERSION, read by both build
   paths and reported by `litmus-cli version' and in the User-Agent.
+* Stable machine-readable failure classification in --json: an `error'
+  object on a failing test naming the method sent, the request target
+  as it went on the wire, and the status the server answered with, or
+  null if nothing came back. `context' is unchanged and still the
+  human-readable message.
 * tests/godav.sh runs the suites against golang.org/x/net/webdav as a
   second opinion, because wsgidav cannot exercise the lock tests at
   all: it answers LOCK with the Content-Type "application; charset=utf-8",

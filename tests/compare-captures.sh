@@ -8,6 +8,9 @@
 # between any two runs by design -- so a difference there is a real one.
 #
 # Exits 0 if the two agree, 1 otherwise, printing what moved.
+#
+# A difference confined to copymove is probably not yours: see the note
+# in capture.sh.  Capture a third time and compare that against both.
 
 A=$1
 B=$2

@@ -102,9 +102,9 @@ through the same code but runs outside the harness, so anything reading
 Every counter, buffer and flag the harness owns is returned to its
 initial value at the top of `run_suite()`: `passes`, `fails`, `skipped`,
 `warnings`, `count`, `quiet`, `warned`, `aborted`, `test_num`,
-`test_name`, `have_context`, `test_context`, `run_started_iso`, and the
-per-test records. Without it the second suite in a process starts with
-the first one's totals.
+`test_name`, `have_context`, `test_context`, `run_started_iso`, the
+recorded request, and the per-test records. Without it the second suite
+in a process starts with the first one's totals.
 
 Anything added at file scope in this file has to be listed there too.
 
@@ -165,7 +165,27 @@ In `tests.c`:
   are suppressed in JSON mode. The surrounding logic is untouched, so
   the counters and exit status are identical either way.
 
-### 11. Three helpers made non-static
+### 11. `t_request_begin()` and `t_request_status()`
+
+A failing test's `context` is prose, so a consumer that wants to branch
+on the kind of failure has to pattern-match it. These two entry points
+let the caller tell the harness what the running test asked for and what
+it was answered:
+
+```c
+void t_request_begin(const char *method, const char *path);
+void t_request_status(int status);
+```
+
+litmus feeds them from `ne_hook_create_request` and
+`ne_hook_post_headers` on both sessions, so no test had to change.
+`record_result()` copies the pair into the record of a test that failed,
+and `emit_json()` writes it as the `"error"` object. Both are cleared at
+the start of every test and by `reset_state()`.
+
+Nothing is printed, so the text output is unaffected.
+
+### 12. Three helpers made non-static
 
 `test_now_seconds()`, `test_now_iso8601()` and `test_json_string()` were
 static to `tests.c`. They are declared in `tests.h` and exported so that
@@ -191,7 +211,7 @@ then make the change, rebuild, capture to `/tmp/after`, and
 Two captures of the same build are byte for byte identical, so any
 difference is the change under test.
 
-## 12. Removed `neon/.github`
+## 13. Removed `neon/.github`
 
 The vendored copy brought neon's own CI workflows with it. GitHub only
 reads workflows from the repository root, so they could never run, and

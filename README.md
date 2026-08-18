@@ -247,7 +247,8 @@ One object on stdout and nothing else:
   "tests": [
     {"name": "copy_simple", "status": "pass", "duration": 0.061},
     {"name": "copy_shallow", "status": "fail", "duration": 0.376,
-     "context": "DELETE on `/litmus/ccdest/foo' should fail with 404: got 204"}
+     "context": "DELETE on `/litmus/ccdest/foo' should fail with 404: got 204",
+     "error": {"op": "DELETE", "path": "/litmus/ccdest/foo", "status": 204}}
   ],
   "summary": {"total": 15, "passed": 14, "failed": 1,
               "skipped": 0, "notrun": 0, "warnings": 0}
@@ -259,6 +260,12 @@ One object on stdout and nothing else:
 none. A `warnings` array appears on a test that issued warnings.
 `notrun` counts tests never reached because an earlier test aborted the
 suite.
+
+`error` appears on a failing test that reached the network, and is the
+stable form of the same information: the method sent, the request target
+as it went on the wire, and the status the server answered with, or
+`null` if nothing came back. Branch on that rather than parsing
+`context`.
 
 `started` is ISO 8601 in UTC with millisecond precision, always ending
 in `Z`, truncated rather than rounded. Durations are seconds to

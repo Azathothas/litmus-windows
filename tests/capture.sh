@@ -15,8 +15,14 @@
 #   make -f Makefile.w32 && ./tests/capture.sh /tmp/after
 #   ./tests/compare-captures.sh /tmp/before /tmp/after
 #
-# Two captures of the same build are byte for byte identical, so any
-# difference is the change under test.
+# Almost all of a capture is deterministic, so a difference is normally
+# the change under test.  One thing is not: against wsgidav on Windows,
+# copymove occasionally reports a transient 403 or 412 on a COPY or on
+# the DELETE before it, which shows up as copy_overwrite failing or
+# copy_abspath warning.  Fifteen consecutive copymove runs against a
+# dedicated server were identical, so this is the server's filesystem
+# under load rather than anything in litmus.  If a diff is confined to
+# copymove, capture again before believing it.
 #
 # Environment:
 #   PORT     port for the server (default 8901)

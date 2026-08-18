@@ -516,6 +516,23 @@ static void i_pre_send(ne_request *req, void *userdata, ne_buffer *hdr)
                        name, test_suite, test_num, current_test());
 }
 
+/* Note what the running test asked for and what it was answered, so
+ * that the harness can classify a failure in the JSON output without
+ * the consumer having to parse the prose in "context".  Both sessions
+ * are hooked; whichever made the most recent request wins, which is
+ * the one a failure is about. */
+static void i_create_request(ne_request *req, void *userdata,
+                             const char *method, const char *target)
+{
+    t_request_begin(method, target);
+}
+
+static void i_post_headers(ne_request *req, void *userdata,
+                           const ne_status *status)
+{
+    t_request_status(status->code);
+}
+
 /* Writes 'text' with every line prefixed by 'prefix', so that a request
  * or response block stays visually distinct in the trace. */
 static void trace_block(const char *prefix, const char *text)
@@ -725,6 +742,12 @@ int begin(void)
      * test number and session. */
     ne_hook_pre_send(i_session, i_pre_send, "X-Litmus");
     ne_hook_pre_send(i_session2, i_pre_send, "X-Litmus-Second");
+
+    /* Feed the harness the method, path and status behind a failure. */
+    ne_hook_create_request(i_session, i_create_request, NULL);
+    ne_hook_create_request(i_session2, i_create_request, NULL);
+    ne_hook_post_headers(i_session, i_post_headers, NULL);
+    ne_hook_post_headers(i_session2, i_post_headers, NULL);
 
     /* Registered after i_pre_send so that the X-Litmus header is
      * already in the buffer by the time the request is dumped. */

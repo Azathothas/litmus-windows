@@ -172,7 +172,8 @@ One object per suite, on stdout, nothing else:
   "tests": [
     {"name": "copy_init", "status": "pass", "duration": 0.061},
     {"name": "copy_shallow", "status": "fail", "duration": 0.376,
-     "context": "DELETE on `/dav/litmus/ccdest/foo' should fail with 404: got 204"},
+     "context": "DELETE on `/dav/litmus/ccdest/foo' should fail with 404: got 204",
+     "error": {"op": "DELETE", "path": "/dav/litmus/ccdest/foo", "status": 204}},
     {"name": "move", "status": "pass", "duration": 0.122,
      "warnings": ["MOVE did not return 201"]}
   ],
@@ -187,10 +188,49 @@ One object per suite, on stdout, nothing else:
 | `target` | The URL you passed. |
 | `started` | When the first test began, ISO 8601 in UTC with millisecond precision, always suffixed `Z`. Truncated rather than rounded, so it never names a moment that had not happened yet. Absent only if the clock could not be read. |
 | `duration` | Seconds, to millisecond resolution. Present on the run and on each test. Wall-clock, so it includes server time and network time. |
-| `tests[].context` | The failure message. Absent when the test set none. Human-readable: it names the method, the path, and the difference between expected and actual. |
+| `tests[].context` | The failure message. Absent when the test set none. Human-readable: it names the method, the path, and the difference between expected and actual. Prose, and not a stable interface — branch on `error` instead. |
+| `tests[].error` | Machine-readable classification of a failure. See below. |
 | `tests[].warnings` | Array of strings, present only when a test issued warnings. A warning is a spec deviation litmus chose not to fail on, usually a tolerable but wrong status code. Worth fixing, not urgent. |
 | `summary.total` | Every test defined in the suite, so `passed + failed + skipped + notrun` equals it. |
 | `summary.warnings` | Total across the run, including any issued before the first test. |
+
+### Classifying a failure
+
+`context` is prose. To branch on the kind of failure without matching
+strings, read `error`:
+
+```json
+"error": {"op": "DELETE", "path": "/dav/litmus/ccdest/foo", "status": 204}
+```
+
+It describes the last request the test made and the response it got,
+which is the request the failure is about. This is part of the JSON
+contract:
+
+| Field | Notes |
+| --- | --- |
+| `error` | Present only on a test whose `status` is `fail` or `fatal`, and only if the test got as far as sending a request. A test that failed a precondition without touching the network has no `error`. |
+| `error.op` | The HTTP method, as sent. One of `OPTIONS`, `GET`, `HEAD`, `PUT`, `DELETE`, `MKCOL`, `COPY`, `MOVE`, `PROPFIND`, `PROPPATCH`, `LOCK`, `UNLOCK`, plus `CONNECT` when tunnelling through a proxy. That set is closed: litmus chooses the method, so a server cannot introduce a new one. |
+| `error.path` | The request target exactly as it went on the wire. Normally an absolute path; `*` for `OPTIONS *`, and `host:port` for `CONNECT`. |
+| `error.status` | The response status as an integer, or `null` when no response arrived at all — a refused connection, a timeout, a TLS failure. `null` and a missing `error` mean different things: `null` means litmus asked and got nothing back. |
+
+Two consequences worth knowing. First, `op` is the operation that was
+performed, which is not always the operation that is broken: a test
+often probes with one method to check what an earlier one did, as in the
+`copy_shallow` example below. Second, a redirect or an authentication
+challenge is retried by neon on the same request, so `status` is the
+final response, not the intermediate one.
+
+```python
+if t["status"] in ("fail", "fatal"):
+    err = t.get("error")
+    if err is None:
+        kind = "no request made"
+    elif err["status"] is None:
+        kind = "transport"          # never reached the server
+    else:
+        kind = "%s -> %d" % (err["op"], err["status"])
+```
 
 `litmus-cli all --json`, and the `litmus` driver script with `--json`,
 give one object per suite, one per line, which is JSON Lines. Parse it

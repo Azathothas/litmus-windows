@@ -81,9 +81,17 @@ struct test_record {
     const char *status;
     double duration;
     char *context;              /* NULL if the test set none */
+    char *op_method;            /* NULL if the test made no request */
+    char *op_path;
+    int op_status;              /* 0 if no response was received */
     char **warns;
     unsigned nwarns;
 };
+
+/* The request the running test most recently made.  Reset per test, and
+ * copied into that test's record if it fails. */
+static char *op_method, *op_path;
+static int op_status;
 
 static struct test_record *records;
 static int nrecords;
@@ -192,6 +200,27 @@ void test_json_string(const char *str)
     putchar('"');
 }
 
+/* Forgets the request the previous test made. */
+static void clear_operation(void)
+{
+    if (op_method) ne_free(op_method);
+    if (op_path) ne_free(op_path);
+    op_method = op_path = NULL;
+    op_status = 0;
+}
+
+void t_request_begin(const char *method, const char *path)
+{
+    clear_operation();
+    if (method) op_method = ne_strdup(method);
+    if (path) op_path = ne_strdup(path);
+}
+
+void t_request_status(int status)
+{
+    op_status = status;
+}
+
 /* Records the outcome of test 'n'; a no-op unless JSON was requested. */
 static void record_result(int n, const char *status, double duration)
 {
@@ -204,6 +233,16 @@ static void record_result(int n, const char *status, double duration)
     rec->status = status;
     rec->duration = duration;
     if (have_context) rec->context = ne_strdup(test_context);
+
+    /* Only a failure needs classifying, and only if the test got as far
+     * as making a request. */
+    if (op_method && (strcmp(status, "fail") == 0
+                      || strcmp(status, "fatal") == 0)) {
+        rec->op_method = ne_strdup(op_method);
+        if (op_path) rec->op_path = ne_strdup(op_path);
+        rec->op_status = op_status;
+    }
+
     if (n >= nrecords) nrecords = n + 1;
 }
 
@@ -216,6 +255,8 @@ static void free_records(void)
         unsigned w;
 
         if (records[i].context) ne_free(records[i].context);
+        if (records[i].op_method) ne_free(records[i].op_method);
+        if (records[i].op_path) ne_free(records[i].op_path);
         for (w = 0; w < records[i].nwarns; w++)
             ne_free(records[i].warns[w]);
         if (records[i].warns) ne_free(records[i].warns);
@@ -260,6 +301,21 @@ static void emit_json(double duration)
         if (rec && rec->context) {
             printf(",\"context\":");
             test_json_string(rec->context);
+        }
+        /* The last request the test made before it failed, so a
+         * consumer can branch on the kind of failure rather than
+         * pattern-matching the prose in "context".  Absent on a test
+         * that passed or that never reached a request; "status" is null
+         * when no response was received at all. */
+        if (rec && rec->op_method) {
+            printf(",\"error\":{\"op\":");
+            test_json_string(rec->op_method);
+            printf(",\"path\":");
+            test_json_string(rec->op_path ? rec->op_path : "");
+            if (rec->op_status)
+                printf(",\"status\":%d}", rec->op_status);
+            else
+                printf(",\"status\":null}");
         }
         if (rec && rec->nwarns) {
             unsigned w;
@@ -446,6 +502,7 @@ static void reset_state(void)
     have_context = 0;
     test_context[0] = '\0';
     run_started_iso[0] = '\0';
+    clear_operation();
     free_records();
 }
 
@@ -590,6 +647,7 @@ int run_suite(const char *name, ne_test *suite, int argc, char *argv[])
         print_prefix(n);
 
 	have_context = 0;
+        clear_operation();
 	test_num = n;
 	warned = 0;
 	fflush(stdout);
