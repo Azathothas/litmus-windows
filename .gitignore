@@ -32,3 +32,10 @@
 # Local WebDAV server used by tests/wsgidav.sh.
 /dav-venv/
 /davroot/
+
+# Second-opinion WebDAV server and the scratch directories the test
+# scripts write.
+/tests/godav/godav
+/tests/godav/godav.exe
+/godav-results/
+/hyperfine-root/
