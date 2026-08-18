@@ -11,8 +11,6 @@ Changes in version 0.18-win2:
 * New tests:
  - basic/mkcol_percent_20: a collection whose name contains an escaped
    space, created, listed and removed
- - basic/mkcol_again: a second MKCOL on an existing collection must be
-   refused
  - copymove/copy_content, copymove/move_content: the body at the
    destination is compared byte for byte with the source
  - locks/locknull, locks/locknull_discover, locks/locknull_unlock:
@@ -51,9 +49,22 @@ Changes in version 0.18-win2:
   between suites, compared against checked-in expected output for all
   three output modes. Until now nothing could be checked without a
   live WebDAV server.
+* Bug fix: `litmus-cli all --help' printed the option list once per
+  suite, five times, and `litmus-cli all --bogus' did the same and
+  exited 5. Both are answered once now, exiting 0 and 1.
 * neon's NE_PRIVATE no longer applies a visibility attribute on PE
   targets, where GCC ignores it and warns. Both build paths are now
   warning-free. See PATCHES.md.
+* Releases publish litmus-cli.exe on its own as well as in the zip, and
+  neither asset name carries a version, so
+  https://github.com/Azathothas/litmus-windows/releases/latest/download/litmus-cli.exe
+  is a fixed URL that always resolves to the newest release. One curl
+  or one Invoke-WebRequest, no API call and nothing to parse.
+* CI gained a lint gate that runs before the Windows builds, a
+  concurrency group, dependabot for the actions and the Go test
+  server, a cached wsgidav virtualenv, both server gates and the
+  harness self-test, and a release job that refuses to run if the tag
+  disagrees with VERSION or the release already exists.
 
 Changes in version 0.18-win1:
 * Builds and runs on Windows as a native MinGW-w64 program:
