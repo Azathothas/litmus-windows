@@ -17,6 +17,7 @@ package main
 import (
 	"flag"
 	"log"
+	"net"
 	"net/http"
 
 	"golang.org/x/net/webdav"
@@ -33,6 +34,14 @@ func main() {
 		LockSystem: webdav.NewMemLS(),
 	}
 
-	log.Printf("serving %s on %s", *dir, *addr)
-	log.Fatal(http.ListenAndServe(*addr, h))
+	// Bind first and announce afterwards, so the "listening on" line is
+	// a real readiness signal: a script that waits for it in the log
+	// knows the port is accepting connections.  http.ListenAndServe
+	// would have to be raced against instead.
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("serving %s, listening on %s", *dir, ln.Addr())
+	log.Fatal(http.Serve(ln, h))
 }

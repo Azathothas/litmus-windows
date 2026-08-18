@@ -1,10 +1,10 @@
 #!/bin/sh
 set -e
-echo -n "aclocal... "
+printf 'aclocal... '
 ${ACLOCAL:-aclocal} -I neon/macros -I m4
-echo -n "autoheader... "
+printf 'autoheader... '
 ${AUTOHEADER:-autoheader} -Wall
-echo -n "autoconf... "
+printf 'autoconf... '
 ${AUTOCONF:-autoconf} -Wall
 echo okay.
 rm -rf autom4te*.cache

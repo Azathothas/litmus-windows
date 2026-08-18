@@ -1,0 +1,34 @@
+# Expected results for the suites run against golang.org/x/net/webdav by
+# tests/godav.sh --check.  Columns: suite passed failed skipped
+#
+# This is the only gate that covers the lock tests.  wsgidav answers
+# LOCK with the Content-Type "application; charset=utf-8", which is not
+# a media type, so neon discards the body, litmus never sees a lock
+# token, and 31 of the 43 tests in locks are skipped there.  A change to
+# lock behaviour is invisible against wsgidav and visible here.
+#
+# props and locks do not reach 100% because x/net/webdav is not fully
+# RFC 4918 compliant, not because litmus is broken:
+#
+#   props/propset, props/propmanyns, props/propget
+#                          no dead property store at all: PROPPATCH is
+#                          answered 403, and the value never comes back.
+#   props/propfind_invalid2
+#                          an invalid namespace declaration in the
+#                          request body is answered 207, not 400.
+#   locks/owner_modify     PROPPATCH against a resource this client
+#                          holds the lock on is answered 403, for the
+#                          same reason: no property store.  Counted
+#                          twice, once per lock scope.
+#   locks/lock_shared      shared locks are answered 501.
+#   locks/fail_complex_cond_put
+#                          a PUT carrying a deliberately bogus complex
+#                          If: header succeeds instead of failing 412.
+#
+# Update these numbers only when the change is understood; a difference
+# here means either litmus or the server changed behaviour.
+basic     17 0  0
+copymove  15 0  0
+props     10 4 19
+locks     32 4  7
+http       4 0  0

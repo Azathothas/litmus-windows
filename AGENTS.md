@@ -438,7 +438,8 @@ That starts a local wsgidav, runs the suites, and compares against
 `http` fully passing, with the two known wsgidav bugs above accounted
 for. Anything else means the build is suspect, not the server.
 
-`./tests/godav.sh` does the same against `golang.org/x/net/webdav`,
-which locks correctly but has no dead property store. Use it whenever
-lock behaviour is what you care about: **the lock tests cannot run
-against wsgidav at all.**
+`./tests/godav.sh --check` does the same against
+`golang.org/x/net/webdav`, which locks correctly but has no dead
+property store, comparing against `tests/expected-godav.txt`. Use it
+whenever lock behaviour is what you care about: **the lock tests cannot
+run against wsgidav at all.** CI runs both gates.

@@ -460,6 +460,10 @@ section 7.3 treatment of a `LOCK` on an unmapped URL, but has no dead
 property store, so four `props` tests fail there. Verify lock work
 against `godav.sh` and property work against `wsgidav.sh`.
 
+`./tests/godav.sh --check` compares against `tests/expected-godav.txt`
+the same way, and is the only gate that covers the lock tests at all.
+CI runs both.
+
 Two more scripts support changes to the shared harness:
 
 * `tests/capture.sh OUTDIR` captures every suite in default, `--quiet`

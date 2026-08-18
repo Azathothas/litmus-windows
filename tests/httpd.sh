@@ -14,7 +14,7 @@ CID=`${PODMAN} run -d -p 8080:80 fedora-httpd /usr/sbin/httpd -X`
 sleep 5
 
 echo "-- Running tests --"
-./litmus $* http://localhost:8080/dav/
+./litmus "$@" http://localhost:8080/dav/
 RV=$?
 ${PODMAN} kill ${CID}
 exit $RV

@@ -10,9 +10,82 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same ref supersedes an in-flight run.  Tag runs
+# are never cancelled: one cut short partway through leaves a release
+# half made.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
-  # Both build paths, each checked against a real WebDAV server.
+  # Cheap checks that do not need a Windows runner, so a typo fails in
+  # under a minute instead of after three MSYS2 installs.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # shellcheck ships in the runner image, but installing it when it
+      # does not keeps this from breaking on an image change.
+      - name: Shell scripts
+        run: |
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get -qq update
+            sudo apt-get -qq install -y shellcheck
+          fi
+          shellcheck --version
+          shellcheck --severity=warning autogen.sh tests/*.sh
+
+      # A virtualenv rather than pip --user: recent Debian and Ubuntu
+      # mark the system interpreter externally managed and refuse.
+      - name: Python tools
+        run: |
+          python3 -m venv /tmp/lintvenv
+          /tmp/lintvenv/bin/pip install --quiet --upgrade pip
+          /tmp/lintvenv/bin/pip install --quiet pyflakes pyyaml
+
+      - name: Python
+        run: /tmp/lintvenv/bin/python -m pyflakes tests/*.py
+
+      - name: Workflow and dependabot YAML
+        run: |
+          /tmp/lintvenv/bin/python - <<'PY'
+          import yaml
+          for path in (".github/workflows/ci.yml", ".github/dependabot.yml"):
+              with open(path, encoding="utf-8") as fh:
+                  yaml.safe_load(fh)
+              print("ok", path)
+          PY
+
+      - name: Go test server
+        run: |
+          cd tests/godav
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            gofmt -d .
+            echo "::error::gofmt found unformatted files: $unformatted"
+            exit 1
+          fi
+          go vet ./...
+
+      - name: VERSION is one plain line
+        run: |
+          if [ "$(wc -l < VERSION)" != "1" ]; then
+            echo "::error::VERSION must be exactly one line"
+            exit 1
+          fi
+          case "$(cat VERSION)" in
+            *[!0-9A-Za-z.-]*|"")
+              echo "::error::VERSION holds something that is not a version string"
+              exit 1
+              ;;
+          esac
+          echo "VERSION is $(cat VERSION)"
+
+  # Both build paths, each checked against two real WebDAV servers.
   build:
+    needs: lint
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -29,14 +102,15 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
-          # path-type: inherit keeps the Windows PATH, so the Python that
-          # tests/wsgidav.sh needs stays reachable from the MSYS2 shell.
+          # path-type: inherit keeps the Windows PATH, so the Python
+          # that tests/wsgidav.sh needs and the Go that tests/godav.sh
+          # needs stay reachable from the MSYS2 shell.
           path-type: inherit
           install: >-
             autoconf
@@ -56,11 +130,40 @@ jobs:
         run: |
           ./autogen.sh
           ./configure --with-ssl=openssl
-          make
+          make 2>&1 | tee build.log
 
       - name: Build (Makefile.w32)
         if: matrix.name != 'autotools'
-        run: make -f Makefile.w32 STATIC=${{ matrix.static }}
+        run: make -f Makefile.w32 STATIC=${{ matrix.static }} 2>&1 | tee build.log
+
+      # Both build paths are warning-free, including the vendored neon,
+      # so a new warning is a regression rather than background noise.
+      - name: No compiler warnings
+        run: |
+          if grep -n 'warning:' build.log; then
+            echo "::error::the build emitted compiler warnings"
+            exit 1
+          fi
+          echo "no warnings"
+
+      # The virtualenv is the slowest part of the wsgidav harness and
+      # changes only when the script that builds it does.  A venv also
+      # depends on the interpreter that made it, which the key cannot
+      # see; tests/wsgidav.sh checks that the restored one still works
+      # and rebuilds it if not, so a stale hit costs a restore rather
+      # than a confusing failure.
+      - uses: actions/cache@v6
+        with:
+          path: dav-venv
+          key: dav-venv-${{ runner.os }}-${{ hashFiles('tests/wsgidav.sh') }}
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/AppData/Local/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('tests/godav/go.sum') }}
+          restore-keys: go-${{ runner.os }}-
 
       - name: Check the suites against wsgidav
         run: ./tests/wsgidav.sh --check
@@ -68,56 +171,106 @@ jobs:
           TEST_COLOUR: '1'
           TEST_NODEBUG: '1'
 
-      - name: Confirm the static binaries carry no third-party DLLs
+      # wsgidav answers LOCK with a Content-Type that is not a media
+      # type, so neon discards the body and every lock test is skipped
+      # there.  x/net/webdav locks correctly, which makes this the only
+      # gate that covers them.
+      - name: Check the suites against x/net/webdav
+        run: ./tests/godav.sh --check
+        env:
+          TEST_COLOUR: '1'
+
+      - name: Confirm the static executable carries no third-party DLLs
         if: matrix.static == '1'
         run: |
-          set -e
-          for exe in *.exe; do
-            if objdump -p "$exe" | grep -i "DLL Name" \
-               | grep -viE "api-ms-win|kernel32|ws2_32|advapi32|user32|crypt32|bcrypt"; then
-              echo "$exe depends on a DLL that will not be present on a clean machine"
-              exit 1
-            fi
-          done
-          echo "all executables are self-contained"
+          if objdump -p litmus-cli.exe | grep -i 'DLL Name' \
+             | grep -viE 'api-ms-win|kernel32|ws2_32|advapi32|user32|crypt32|bcrypt'; then
+            echo "::error::litmus-cli.exe depends on a DLL that will not be present on a clean machine"
+            exit 1
+          fi
+          echo "litmus-cli.exe is self-contained"
 
-      - name: Upload the executables
+      - name: Upload the executable
         if: matrix.static == '1'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: litmus-windows-x86_64
-          # Just the executables and the documentation.  The "litmus"
-          # driver script is generated by configure, which this build
-          # path does not run, and it needs a POSIX shell anyway.
+          # The executable and the documentation a user of the binary
+          # needs.  The "litmus" driver script is generated by
+          # configure, which this build path does not run, and it needs
+          # a POSIX shell anyway.
           path: |
-            *.exe
+            litmus-cli.exe
             README.md
             AGENTS.md
             COPYING
           if-no-files-found: error
 
-  # Tagged pushes publish the self-contained executables as a release.
+  # Tagged pushes publish the self-contained executable as a release.
+  # Asset names carry no version, so
+  # .../releases/latest/download/litmus-cli.exe is a fixed URL that
+  # always resolves to the newest one.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+
+      - name: The tag must match VERSION
+        run: |
+          want="v$(cat VERSION)"
+          if [ "$TAG" != "$want" ]; then
+            echo "::error::tag $TAG does not match VERSION, which says $want"
+            exit 1
+          fi
+
+      # gh release create refuses to overwrite too, but only after
+      # uploading.  Failing here keeps a good release untouched.
+      - name: Refuse to overwrite an existing release
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $TAG already exists; delete it or tag a new version"
+            exit 1
+          fi
+          echo "$TAG is free"
+
+      - uses: actions/download-artifact@v8
         with:
           name: litmus-windows-x86_64
           path: dist
 
-      - name: Create the release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Package
         run: |
-          cd dist
-          zip -r ../litmus-windows-x86_64.zip .
-          cd ..
-          gh release create "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${GITHUB_REF_NAME}" \
+          test -f dist/litmus-cli.exe
+          (cd dist && zip -r ../litmus-windows-x86_64.zip .)
+
+      - name: Create the release
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
             --generate-notes \
+            --latest \
+            --verify-tag \
+            dist/litmus-cli.exe \
             litmus-windows-x86_64.zip
+
+      # A release that exists but has no assets is worse than none: the
+      # fixed download URL would 404 and nothing would have said so.
+      - name: Confirm both assets are attached
+        run: |
+          names=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+                    --json assets --jq '.assets[].name' | sort | tr '\n' ' ')
+          echo "assets: $names"
+          for want in litmus-cli.exe litmus-windows-x86_64.zip; do
+            case " $names " in
+              *" $want "*) ;;
+              *) echo "::error::release $TAG is missing $want"; exit 1 ;;
+            esac
+          done

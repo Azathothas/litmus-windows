@@ -42,13 +42,11 @@ if command -v cygpath >/dev/null 2>&1; then
     CLI=`cygpath -m "$CLI"`
 fi
 
+# Always rebuild; go caches, and a stale executable from an older
+# main.go would otherwise be used silently.
+(cd tests/godav && go build -o godav .)
 SERVER=tests/godav/godav
 [ -x "$SERVER" ] || SERVER=tests/godav/godav.exe
-if [ ! -x "$SERVER" ]; then
-    (cd tests/godav && go build -o godav .)
-    SERVER=tests/godav/godav
-    [ -x "$SERVER" ] || SERVER=tests/godav/godav.exe
-fi
 
 ROOT=hyperfine-root
 rm -rf "$ROOT"
@@ -61,7 +59,15 @@ fi
 "$SERVER" -addr "127.0.0.1:$PORT" -dir "$ABSROOT" > "$ROOT/server.log" 2>&1 &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || :' EXIT INT TERM
-sleep 1
+
+# The server binds before it logs this, so the line means the port is
+# accepting connections.
+n=0
+while [ "$n" -lt 100 ]; do
+    grep -q "listening on" "$ROOT/server.log" 2>/dev/null && break
+    n=`expr $n + 1`
+    sleep 0.1 2>/dev/null || sleep 1
+done
 
 TEST_NODEBUG=1 TEST_COLOUR=0 \
 "$HYPERFINE" -N --warmup 3 --runs 20 --style basic \

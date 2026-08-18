@@ -26,6 +26,8 @@ def read_expected(path):
                          % (path, lineno, len(fields)))
             suite, passed, failed, skipped = fields
             expected[suite] = (int(passed), int(failed), int(skipped))
+    if not expected:
+        sys.exit("%s: no expected results in this file" % path)
     return expected
 
 

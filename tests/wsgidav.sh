@@ -40,54 +40,10 @@ if [ "${1-}" = "--check" ]; then
     shift
 fi
 
-# Returns success if $1 is an interpreter this script can use.
-#
-# Running it is the only reliable test.  On Windows "python3" is usually
-# a Microsoft Store stub that exists, resolves, and then refuses to run,
-# and "py" is a launcher that is present even when no interpreter is
-# registered with it.
-#
-# An MSYS2 python is rejected on purpose: it runs perfectly well, but
-# wsgidav depends on bcrypt, which has no mingw wheel and needs a Rust
-# toolchain to build from source.  sysconfig.get_platform() reports
-# mingw_x86_64_ucrt_gnu there against win-amd64 for a native Python.
-usable_python() {
-    plat=`"$1" -c "import sysconfig; print(sysconfig.get_platform())" 2>/dev/null` \
-        || return 1
-    case $plat in
-        mingw*) return 1 ;;
-        "")     return 1 ;;
-        *)      return 0 ;;
-    esac
-}
-
-if [ -z "${PYTHON-}" ]; then
-    for candidate in python3 python py; do
-        if usable_python "$candidate"; then
-            PYTHON=$candidate
-            break
-        fi
-    done
-fi
-
-# An MSYS2 shell started from the Start menu has a minimal PATH that
-# leaves out the Windows one, so a usable Python can be sitting in the
-# normal place and still not be found above.  Look there before giving
-# up.
-if [ -z "${PYTHON-}" ] && command -v cygpath >/dev/null 2>&1; then
-    for base in "${LOCALAPPDATA-}\\Programs\\Python" "${PROGRAMFILES-}" "C:\\"; do
-        [ -n "$base" ] || continue
-        dir=`cygpath -u "$base" 2>/dev/null` || continue
-        [ -d "$dir" ] || continue
-        for candidate in "$dir"/Python3*/python.exe "$dir"/Python*/python.exe; do
-            if [ -x "$candidate" ] && usable_python "$candidate"; then
-                PYTHON=$candidate
-                echo "-- Using $candidate --"
-                break 2
-            fi
-        done
-    done
-fi
+# wsgidav needs a native Windows Python: bcrypt has no mingw wheel.
+NEED_NATIVE_PYTHON=1
+# shellcheck source=tests/python.sh
+. tests/python.sh
 
 if [ -z "${PYTHON-}" ]; then
     cat >&2 <<'MSG'
@@ -105,15 +61,22 @@ MSG
     exit 1
 fi
 
-# The venv layout differs between Windows and Unix.
-if [ -x "$VENV/Scripts/python.exe" ]; then
-    VPYTHON="$VENV/Scripts/python.exe"
-elif [ -x "$VENV/bin/python" ]; then
-    VPYTHON="$VENV/bin/python"
-else
+# The venv layout differs between Windows and Unix.  Existing is not
+# enough: a venv from an interrupted run has an interpreter and no
+# packages, and one restored from a CI cache can point at an
+# interpreter that is no longer installed.  Import what the server
+# needs; if that fails, throw the directory away and build it again.
+VPYTHON=
+for candidate in "$VENV/Scripts/python.exe" "$VENV/bin/python"; do
+    if [ -x "$candidate" ] \
+       && "$candidate" -c "import wsgidav, cheroot" >/dev/null 2>&1; then
+        VPYTHON=$candidate
+        break
+    fi
+done
+
+if [ -z "$VPYTHON" ]; then
     echo "-- Creating virtualenv in $VENV --"
-    # Start clean: a half-built venv from an interrupted run would
-    # otherwise be picked up as usable on the next one.
     rm -rf "$VENV"
     "$PYTHON" -m venv "$VENV"
     if [ -x "$VENV/Scripts/python.exe" ]; then

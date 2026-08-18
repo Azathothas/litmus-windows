@@ -3,6 +3,13 @@
 # to wsgidav.
 #
 #   ./tests/godav.sh [OUTDIR] [SUITE...]
+#   ./tests/godav.sh --check [OUTDIR]
+#
+# --check runs every suite with --json and compares the totals against
+# tests/expected-godav.txt, exiting non-zero if anything moved.  This is
+# the only gate that covers the lock tests: they cannot run at all
+# against wsgidav.  It needs a Python interpreter for
+# tests/check-expected.py; any will do, including MSYS2's.
 #
 # Needs a Go toolchain and, on the first run, network access to fetch
 # golang.org/x/net.  The server source is in tests/godav.
@@ -18,16 +25,33 @@
 # Environment:
 #   PORT     port for the server (default 8909)
 #   TESTS    suites to run (default: basic copymove props locks http)
+#   PYTHON   interpreter for the --check comparison
 
 set -e
 
 srcdir=`dirname "$0"`/..
 cd "$srcdir"
 
+CHECK=0
+if [ "${1-}" = "--check" ]; then
+    CHECK=1
+    shift
+fi
+
 OUT=${1-godav-results}
 [ $# -gt 0 ] && shift
 SUITES=${*:-${TESTS-"basic copymove props locks http"}}
 PORT=${PORT-8909}
+
+if [ $CHECK -eq 1 ]; then
+    # check-expected.py is stdlib only, so any interpreter will do.
+    # shellcheck source=tests/python.sh
+    . tests/python.sh
+    if [ -z "${PYTHON-}" ]; then
+        echo "godav.sh: --check needs a Python interpreter; set \$PYTHON" >&2
+        exit 1
+    fi
+fi
 
 CLI=./litmus-cli
 [ -x "$CLI" ] || CLI=./litmus-cli.exe
@@ -41,14 +65,13 @@ if ! command -v go >/dev/null 2>&1; then
     exit 1
 fi
 
+# Always rebuild: go caches, so this costs a fraction of a second on a
+# repeat run, and it removes the trap of an executable left over from an
+# older main.go.
+echo "-- Building the x/net/webdav server --"
+(cd tests/godav && go build -o godav .)
 SERVER=tests/godav/godav
 [ -x "$SERVER" ] || SERVER=tests/godav/godav.exe
-if [ ! -x "$SERVER" ]; then
-    echo "-- Building the x/net/webdav server --"
-    (cd tests/godav && go build -o godav .)
-    SERVER=tests/godav/godav
-    [ -x "$SERVER" ] || SERVER=tests/godav/godav.exe
-fi
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -72,12 +95,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Wait for the port rather than sleeping blindly.
+# Wait for the server to announce that it is listening, rather than
+# sleeping blindly.  The server binds the socket before it logs that
+# line, so seeing it means the port is accepting connections.
 n=0
-while [ $n -lt 100 ]; do
-    if (exec 3<>/dev/tcp/127.0.0.1/$PORT) 2>/dev/null; then
-        exec 3>&- 2>/dev/null || :
+while [ "$n" -lt 100 ]; do
+    if grep -q "listening on" "$OUT/server.log" 2>/dev/null; then
         break
+    fi
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        echo "godav.sh: server exited; see $OUT/server.log" >&2
+        exit 1
     fi
     n=`expr $n + 1`
     sleep 0.1 2>/dev/null || sleep 1
@@ -85,12 +113,28 @@ done
 
 echo "-- Running tests --"
 RV=0
+RESULTS="$OUT/results.jsonl"
+: > "$RESULTS"
+
 for t in $SUITES; do
+    # A fresh collection per suite keeps one suite's leftovers from
+    # aborting the next.
     mkdir -p "$ROOT/$t"
-    TEST_NODEBUG=1 "$CLI" "$t" "http://127.0.0.1:$PORT/$t/" \
-        > "$OUT/$t.txt" 2>&1 || RV=1
-    grep '^<- summary' "$OUT/$t.txt" || echo "  $t: no summary, see $OUT/$t.txt"
+    if [ $CHECK -eq 1 ]; then
+        TEST_NODEBUG=1 "$CLI" "$t" --json "http://127.0.0.1:$PORT/$t/" \
+            >> "$RESULTS" 2>"$OUT/$t.err" || :
+    else
+        TEST_NODEBUG=1 "$CLI" "$t" "http://127.0.0.1:$PORT/$t/" \
+            > "$OUT/$t.txt" 2>&1 || RV=1
+        grep '^<- summary' "$OUT/$t.txt" \
+            || echo "  $t: no summary, see $OUT/$t.txt"
+    fi
 done
+
+if [ $CHECK -eq 1 ]; then
+    echo "-- Comparing against tests/expected-godav.txt --"
+    "$PYTHON" tests/check-expected.py tests/expected-godav.txt "$RESULTS" || RV=1
+fi
 
 echo "-- Output in $OUT --"
 exit $RV
