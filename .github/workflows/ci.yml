@@ -146,6 +146,11 @@ jobs:
           fi
           echo "no warnings"
 
+      # No server, no network, under a second: if the harness itself is
+      # broken there is no point starting one.
+      - name: Check the result harness
+        run: ./tests/harness.sh
+
       # The virtualenv is the slowest part of the wsgidav harness and
       # changes only when the script that builds it does.  A venv also
       # depends on the interpreter that made it, which the key cannot

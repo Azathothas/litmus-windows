@@ -1,0 +1,32 @@
+-> running `selftest-results':
+ 0. pass_plain............  0. pass_plain............ pass
+ 1. pass_one_warning...... WARNING: one warning, and the test still passes
+    ...................... pass (with 1 warning)
+    ...................... WARNING: first warning
+    ...................... WARNING: second warning
+    ...................... pass (with 2 warnings)
+    ......................  3. xfail_as_expected..... XFAIL
+ 4. fail_no_context.......  4. fail_no_context....... FAIL
+ 5. fail_with_context.....  5. fail_with_context..... FAIL (a plain failure message)
+ 6. fail_needing_escapes..  6. fail_needing_escapes.. FAIL (quote " backslash \ newline 
+ return  tab 	 backspace ^H formfeed ^L control ^A utf-8 M-CM-) M-bM-^FM-^R end)
+ 7. fail_with_response....  7. fail_with_response.... FAIL (PROPFIND on `/dav/litmus/nosuch': 507 Insufficient Storage)
+ 8. fail_without_response.  8. fail_without_response. FAIL (PUT on `/dav/litmus/unreachable': could not connect)
+ 9. fail_after_request....  9. fail_after_request.... FAIL (no request was made by this test)
+10. skip_quietly.......... 10. skip_quietly.......... SKIPPED
+11. skip_with_context..... 11. skip_with_context..... SKIPPED (precondition not met)
+12. oops_unknown_result... 12. oops_unknown_result... OOPS unexpected test result `42'
+13. pass_after_oops....... 13. pass_after_oops....... pass
+-> 2 tests were skipped.
+<- summary for `selftest-results': of 12 tests run: 5 passed, 6 failed. 41.7%
+-> 3 warnings were issued.
+-> running `selftest-fatal':
+ 0. pass_before_fatal.....  0. pass_before_fatal..... pass
+ 1. fatal_stops_the_suite.  1. fatal_stops_the_suite. fatal error - FAIL (MKCOL on `/dav/litmus/': 405 Method Not Allowed)
+<- summary for `selftest-fatal': of 2 tests run: 1 passed, 1 failed. 50.0%
+-> running `selftest-skiprest':
+ 0. pass_before_skiprest..  0. pass_before_skiprest.. pass
+ 1. skiprest_stops........  1. skiprest_stops........ SKIPPED (server is not class 2, so the rest cannot run)
+-> 1 test was skipped.
+<- summary for `selftest-skiprest': of 1 tests run: 1 passed, 0 failed. 100.0%
+exit=7

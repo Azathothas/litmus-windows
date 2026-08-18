@@ -466,8 +466,24 @@ Repeat until `basic` is clean, then move to `http`, `copymove`, `props`,
 
 ## Checking your build works
 
-If you want to confirm litmus itself is behaving before pointing it at
-your own server, and you have the source tree:
+Before blaming your server, confirm the binary is sound. This needs no
+server, no network and no source tree, and takes under a second:
+
+```bash
+./litmus-cli.exe selftest
+```
+
+It runs three synthetic suites whose tests return fixed results, so the
+output depends only on the result harness. Expect exit status 7: six
+deliberate failures in the first suite and one in the second. Add
+`--json` to see the machine-readable form of every status, including
+the `error` object and the escaping rules, without needing a server that
+will produce them.
+
+If you have the source tree, `./tests/harness.sh` compares all three
+output modes against checked-in expected output.
+
+To check the suites against a real server instead:
 
 ```bash
 ./tests/wsgidav.sh --check

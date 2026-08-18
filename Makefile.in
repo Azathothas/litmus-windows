@@ -37,8 +37,8 @@ TESTOBJS = src/common.o $(TEST_COMMON)/tests.o
 HDRS = src/common.h src/suites.h src/bench.h $(TEST_COMMON)/tests.h config.h
 
 # Every suite is linked into one executable and selected by subcommand.
-CLI_OBJS = src/litmus-cli.o src/bench.o src/basic.o src/copymove.o \
-	src/props.o src/locks.o src/http.o src/largefile.o \
+CLI_OBJS = src/litmus-cli.o src/bench.o src/selftest.o src/basic.o \
+	src/copymove.o src/props.o src/locks.o src/http.o src/largefile.o \
 	src/protected.o src/lockbomb.o
 PROGRAM = litmus-cli$(EXEEXT)
 
@@ -70,7 +70,7 @@ all: $(PROGRAM)
 	@echo ' or  make URL=http://dav.server/path/ CREDS="uname passwd" check'
 	@echo ""
 
-.PHONY: install check test-httpd test-wsgidav clean distclean subdirs
+.PHONY: install check test-harness test-httpd test-wsgidav clean distclean subdirs
 
 litmus: litmus.in
 	@./config.status $@
@@ -105,6 +105,11 @@ distclean: clean
 	@cd neon/src && $(MAKE) distclean
 	rm -f Makefile litmus tests/httpd config.log config.h config.status
 
+# Checks the result harness against checked-in expected output.  Needs
+# no server and no network, so it is the one test that runs anywhere.
+test-harness: $(PROGRAM)
+	TESTROOT="$(top_builddir)" $(top_srcdir)/tests/harness.sh $(OPTS)
+
 test-httpd: litmus $(PROGRAM)
 	TESTROOT="$(top_builddir)" $(top_builddir)/tests/httpd $(OPTS)
 
@@ -122,6 +127,7 @@ Makefile: $(top_srcdir)/Makefile.in
 	./config.status Makefile
 
 src/litmus-cli.o: src/litmus-cli.c $(HDRS)
+src/selftest.o: src/selftest.c $(HDRS)
 src/basic.o: src/basic.c $(HDRS)
 src/common.o: src/common.c $(HDRS)
 src/copymove.o: src/copymove.c $(HDRS)

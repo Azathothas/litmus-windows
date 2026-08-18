@@ -163,6 +163,7 @@ the options a command takes.
 | `all` | runs `basic`, `copymove`, `props`, `locks` and `http` in that order |
 | `bench` | throughput and connect-latency measurement, not a compliance test |
 | `list` | the suites, one name and summary per line |
+| `selftest` | checks this executable's own result harness; no network, no URL |
 | `version` | the fork version and the bundled neon build |
 
 The URL must be a collection that already exists and ends in a slash.
@@ -406,6 +407,24 @@ It also warns rather than staying silent when `MKCOL` answers with
 something other than 201, or `DELETE` with something other than 204, and
 `PROPPATCH` results are read from inside a 207 multistatus, so a server
 that refuses a `PROPPATCH` with 207 wrapping a 423 is judged on the 423.
+
+## Testing the build
+
+`litmus-cli selftest` checks the executable's own result harness. It
+runs three synthetic suites whose tests return fixed results, makes no
+network requests and takes no URL, so the output is determined entirely
+by the harness: the statuses, the counting, the JSON emission and its
+escaping, the notrun bookkeeping, and the state reset between suites.
+
+```bash
+./tests/harness.sh
+```
+
+captures all three output modes and compares them against
+`tests/harness-expected`, which is checked in. It runs in under a
+second and needs nothing installed. `./tests/harness.sh --regenerate`
+rewrites the expected files after a deliberate change; read the diff
+before checking it in.
 
 ## Testing against a local server
 

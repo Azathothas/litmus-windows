@@ -97,7 +97,10 @@ static void usage(FILE *out, const char *argv0)
 
     fprintf(out,
             "\n"
+            "  bench           measure throughput and connect latency\n"
             "  list            list the suites, one name and summary per line\n"
+            "  selftest        check this executable's own result harness;\n"
+            "                  makes no network requests and takes no URL\n"
             "  version         print the version\n"
             "\n"
             "Run `%s COMMAND --help' for the options a command takes.\n"
@@ -174,6 +177,43 @@ static int dispatch(const struct litmus_suite *suite, const char *argv0,
     return run_suite(suite->name, suite->tests, argc, argv);
 }
 
+/* Runs the synthetic suites that check the harness itself.  They make
+ * no requests, but litmus_init() insists on a URL, so one is appended
+ * to whatever the user typed rather than being demanded from them; it
+ * is never opened.  Returns the number of failures, which is a fixed
+ * number that tests/harness.sh knows. */
+static int run_selftest(const char *argv0, int argc, char **argv)
+{
+    static char placeholder[] = "http://selftest.invalid/";
+    const struct litmus_suite *suite;
+    char **args;
+    int i, failures = 0, fatal = 0, ret;
+
+    args = ne_malloc((argc + 2) * sizeof(*args));
+    for (i = 0; i < argc; i++) args[i] = argv[i];
+    args[argc] = placeholder;
+    args[argc + 1] = NULL;
+
+    for (suite = litmus_selftest_suites; suite->name; suite++) {
+        /* getopt permutes the array it is given, and the next suite
+         * has to see the same command line, so hand each one a fresh
+         * copy of it. */
+        char **round = ne_malloc((argc + 2) * sizeof(*round));
+
+        memcpy(round, args, (argc + 2) * sizeof(*round));
+        ret = dispatch(suite, argv0, argc + 1, round);
+        ne_free(round);
+
+        if (ret < 0) fatal = ret;
+        else failures += ret;
+    }
+
+    ne_free(args);
+
+    if (fatal) return fatal;
+    return failures > 125 ? 125 : failures;
+}
+
 int main(int argc, char *argv[])
 {
     const struct litmus_suite *suite;
@@ -214,6 +254,10 @@ int main(int argc, char *argv[])
 
     if (strcmp(cmd, "bench") == 0) {
         ret = run_bench(argv[0], argc - 1, argv + 1);
+        litmus_cleanup();
+    }
+    else if (strcmp(cmd, "selftest") == 0) {
+        ret = run_selftest(argv[0], argc - 1, argv + 1);
         litmus_cleanup();
     }
     else if (strcmp(cmd, "all") == 0) {

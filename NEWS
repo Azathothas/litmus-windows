@@ -45,6 +45,12 @@ Changes in version 0.18-win2:
   sees a lock token. tests/capture.sh and tests/compare-captures.sh
   prove that a change leaves the default text output byte for byte
   identical; tests/hyperfine.sh times litmus rather than the server.
+* New `selftest' subcommand and tests/harness.sh: three synthetic
+  suites with no server behind them, covering every status, warnings,
+  contexts, JSON escaping, the notrun bookkeeping and the state reset
+  between suites, compared against checked-in expected output for all
+  three output modes. Until now nothing could be checked without a
+  live WebDAV server.
 * neon's NE_PRIVATE no longer applies a visibility attribute on PE
   targets, where GCC ignores it and warns. Both build paths are now
   warning-free. See PATCHES.md.

@@ -78,7 +78,7 @@ HDRS = src/common.h src/suites.h src/bench.h \
 # ne_test array they register.
 SUITES = basic copymove props locks http largefile protected lockbomb
 
-CLI_OBJS = src/litmus-cli.o src/bench.o \
+CLI_OBJS = src/litmus-cli.o src/bench.o src/selftest.o \
 	   $(addprefix src/,$(addsuffix .o,$(SUITES)))
 
 PROGS = litmus-cli.exe

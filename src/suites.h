@@ -34,6 +34,11 @@ extern ne_test protected_tests[];
 extern ne_test lockbomb_tests[];
 extern ne_test lockbomb_single_tests[];
 
+/* Synthetic suites with no server behind them; see src/selftest.c. */
+extern ne_test selftest_results_tests[];
+extern ne_test selftest_fatal_tests[];
+extern ne_test selftest_skiprest_tests[];
+
 struct litmus_suite {
     const char *name;
     ne_test *tests;
@@ -44,6 +49,11 @@ struct litmus_suite {
 
 /* NULL-terminated, in the order `litmus-cli all' runs them. */
 extern const struct litmus_suite litmus_suites[];
+
+/* NULL-terminated, in the order `litmus-cli selftest' runs them.  Kept
+ * out of litmus_suites[] so they do not appear as things to point at a
+ * server. */
+extern const struct litmus_suite litmus_selftest_suites[];
 
 /* Returns the suite called 'name', or NULL. */
 const struct litmus_suite *litmus_suite_find(const char *name);

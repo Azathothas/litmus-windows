@@ -39,3 +39,7 @@
 /tests/godav/godav.exe
 /godav-results/
 /hyperfine-root/
+
+# Scratch directory tests/harness.sh falls back to when mktemp is
+# unavailable.
+/harness-work.*

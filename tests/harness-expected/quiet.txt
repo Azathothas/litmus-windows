@@ -1,0 +1,20 @@
+selftest-results......  1/14 selftest-results......  1/14 selftest-results......  1/14 selftest-results......  2/14 WARNING: one warning, and the test still passes
+selftest-results......  2/14 selftest-results......  2/14 selftest-results......  3/14 WARNING: first warning
+selftest-results......  3/14 WARNING: second warning
+selftest-results......  3/14 selftest-results......  3/14 selftest-results......  4/14 selftest-results......  4/14 XFAIL - xfail_as_expected
+selftest-results......  4/14 selftest-results......  5/14 selftest-results......  5/14 FAIL - fail_no_context
+selftest-results......  5/14 selftest-results......  6/14 selftest-results......  6/14 FAIL - fail_with_context (a plain failure message)
+selftest-results......  6/14 selftest-results......  7/14 selftest-results......  7/14 FAIL - fail_needing_escapes (quote " backslash \ newline 
+ return  tab 	 backspace ^H formfeed ^L control ^A utf-8 M-CM-) M-bM-^FM-^R end)
+selftest-results......  7/14 selftest-results......  8/14 selftest-results......  8/14 FAIL - fail_with_response (PROPFIND on `/dav/litmus/nosuch': 507 Insufficient Storage)
+selftest-results......  8/14 selftest-results......  9/14 selftest-results......  9/14 FAIL - fail_without_response (PUT on `/dav/litmus/unreachable': could not connect)
+selftest-results......  9/14 selftest-results...... 10/14 selftest-results...... 10/14 FAIL - fail_after_request (no request was made by this test)
+selftest-results...... 10/14 selftest-results...... 11/14 selftest-results...... 11/14 SKIPPED - skip_quietly
+selftest-results...... 11/14 selftest-results...... 12/14 selftest-results...... 12/14 SKIPPED - skip_with_context (precondition not met)
+selftest-results...... 12/14 selftest-results...... 13/14 selftest-results...... 13/14 OOPS unexpected test result `42'
+selftest-results...... 13/14 selftest-results...... 14/14 selftest-results...... 14/14 selftest-results...... 14/14 selftest-results......  5/14 passed, 6 failed (2 skipped) (3 warnings)
+selftest-fatal........  1/ 4 selftest-fatal........  1/ 4 selftest-fatal........  1/ 4 selftest-fatal........  2/ 4 selftest-fatal........  2/ 4 fatal error - FAIL - fatal_stops_the_suite (MKCOL on `/dav/litmus/': 405 Method Not Allowed)
+selftest-fatal........  2/ 4 selftest-fatal........  1/ 4 passed, 1 failed 
+selftest-skiprest.....  1/ 3 selftest-skiprest.....  1/ 3 selftest-skiprest.....  1/ 3 selftest-skiprest.....  2/ 3 selftest-skiprest.....  2/ 3 SKIPPED - skiprest_stops (server is not class 2, so the rest cannot run)
+selftest-skiprest.....  2/ 3 selftest-skiprest.....  1/ 3 passed (1 skipped) 
+exit=7

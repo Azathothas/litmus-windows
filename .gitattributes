@@ -1,0 +1,4 @@
+# The golden files for tests/harness.sh are compared byte for byte
+# after carriage returns are stripped, so git must not rewrite their
+# line endings on checkout, whatever core.autocrlf says.
+tests/harness-expected/* -text
