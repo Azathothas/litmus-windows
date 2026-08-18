@@ -197,8 +197,8 @@ Things that were looked at and deliberately not done
   issue 8. It is 1643 lines with no shared history, stale by many
   commits, and unreviewed. Individual test cases were lifted from it
   after being read and verified on their own merits: the escaped-space
-  collection test, the second-MKCOL check, and the MKCOL 201 and DELETE
-  204 status warnings. The rest was either unsound (a MKCOL of a URI
+  collection test, and the MKCOL 201 and DELETE 204 status warnings.
+  The rest was either unsound (a MKCOL of a URI
   with a literal space, which is not a valid request target) or
   dependent on a particular server's authentication setup.
 

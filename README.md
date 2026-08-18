@@ -393,8 +393,6 @@ Beyond litmus 0.18 this fork tests:
 
 * `basic/mkcol_percent_20` — a collection whose name contains an escaped
   space, created, listed and removed.
-* `basic/mkcol_again` — a second `MKCOL` on an existing collection must
-  be refused.
 * `copymove/copy_content`, `copymove/move_content` — the body at the
   destination is compared byte for byte with the source, so a `COPY` or
   `MOVE` that reports success while writing the wrong bytes is caught.

@@ -127,7 +127,7 @@ Run them in this order. Each assumes the ones before it work.
 | `locks` | 43 | `LOCK` and `UNLOCK`. Exclusive and shared locks, lock discovery, refresh, `If:` conditional headers, locking a collection, indirect refresh through a member, locking an unmapped URL, and the lock-null resource that creates. Requires DAV class 2. |
 | `largefile` | 5 | A single `PUT` of 2147549184 bytes (2.0 GiB), then a `GET` back. Catches 32-bit size arithmetic. Slow, and needs the disk space. |
 | `protected` | 30 | Whether a metadata collection is reachable over DAV. Defaults to `.DAV`, which tests for CVE-2026-42535 in `mod_dav_fs`. Set `$TEST_PROTECTED` to check a different name. |
-| `lockbomb`, `lockbomb-single` | 3 each | Stress test: 20000 `LOCK`/`UNLOCK` cycles. `lockbomb` runs 20 threads in parallel, `lockbomb-single` runs one; `--threads=N` overrides either. Not a compliance test. Use it to look for leaks and lock-table exhaustion. |
+| `lockbomb`, `lockbomb-single` | 3 each | Stress test: 20000 `LOCK`/`UNLOCK` cycles **per thread**, so 400000 in total at `lockbomb`'s default of 20 threads and 20000 for `lockbomb-single`. `--threads=N` overrides either. Not a compliance test. Use it to look for leaks and lock-table exhaustion. |
 
 Counts include `begin` and `finish`, which every suite runs.
 
