@@ -160,6 +160,17 @@ static int run_bench(const char *argv0, int argc, char **argv)
     return ret;
 }
 
+/* Maps what run_suite() returned onto a process exit status.  The two
+ * TEST_INIT_ sentinels mean the command line was answered without a
+ * test running, which is a success for --help and a failure for a
+ * usage error; anything else is already an exit status. */
+static int suite_status(int ret)
+{
+    if (ret == TEST_INIT_DONE) return 0;
+    if (ret == TEST_INIT_USAGE) return 1;
+    return ret;
+}
+
 /* Runs one suite, giving it 'argc'/'argv' as its own command line. */
 static int dispatch(const struct litmus_suite *suite, const char *argv0,
                     int argc, char **argv)
@@ -203,6 +214,14 @@ static int run_selftest(const char *argv0, int argc, char **argv)
         memcpy(round, args, (argc + 2) * sizeof(*round));
         ret = dispatch(suite, argv0, argc + 1, round);
         ne_free(round);
+
+        /* --help and a usage error are answered by the shared option
+         * parser, once, for the whole command; carrying on would repeat
+         * the message for every suite. */
+        if (ret == TEST_INIT_DONE || ret == TEST_INIT_USAGE) {
+            ne_free(args);
+            return suite_status(ret);
+        }
 
         if (ret < 0) fatal = ret;
         else failures += ret;
@@ -261,7 +280,7 @@ int main(int argc, char *argv[])
         litmus_cleanup();
     }
     else if (strcmp(cmd, "all") == 0) {
-        int failures = 0, fatal = 0;
+        int failures = 0, fatal = 0, answered = 0;
 
         for (suite = litmus_suites; suite->name; suite++) {
             int suite_ret;
@@ -273,20 +292,29 @@ int main(int argc, char *argv[])
              * so each suite must start from the same slice. */
             suite_ret = dispatch(suite, argv[0], argc - 1, argv + 1);
 
+            /* --help and a usage error are answered by the shared
+             * option parser, once, for the whole command; carrying on
+             * would repeat the message for every suite. */
+            if (suite_ret == TEST_INIT_DONE || suite_ret == TEST_INIT_USAGE) {
+                answered = suite_ret;
+                break;
+            }
+
             if (suite_ret < 0) fatal = suite_ret;
             else failures += suite_ret;
         }
 
         litmus_cleanup();
 
-        if (fatal) ret = fatal;
+        if (answered) ret = suite_status(answered);
+        else if (fatal) ret = fatal;
         /* The exit status counts failed tests, and an exit status has
          * only 8 bits: stop short of the range the shell uses for
          * signalled exits rather than wrapping around to zero. */
         else ret = failures > 125 ? 125 : failures;
     }
     else if ((suite = litmus_suite_find(cmd)) != NULL) {
-        ret = dispatch(suite, argv[0], argc - 1, argv + 1);
+        ret = suite_status(dispatch(suite, argv[0], argc - 1, argv + 1));
         litmus_cleanup();
     }
     else {

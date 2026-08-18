@@ -589,10 +589,13 @@ int run_suite(const char *name, ne_test *suite, int argc, char *argv[])
                                   &use_colour, &quiet);
 
         if (init == TEST_INIT_DONE || init == TEST_INIT_USAGE) {
-            /* The command line has already been answered in full. */
+            /* The command line has already been answered in full.  Hand
+             * the sentinel straight back rather than an exit status: a
+             * caller running several suites in turn has to be able to
+             * stop, or --help gets answered once per suite. */
             close_logs();
             ne_sock_exit();
-            return init == TEST_INIT_DONE ? 0 : 1;
+            return init;
         }
         else if (init) {
             fprintf(stderr, "%s: Failed parsing command-line.\n", test_suite);
@@ -829,6 +832,10 @@ int run_suite(const char *name, ne_test *suite, int argc, char *argv[])
             putchar('\n');
         }
     }
+
+    /* The records are gone with emit_json(); drop the last recorded
+     * request too, so nothing this file owns outlives the run. */
+    clear_operation();
 
     if (close_logs()) fails = 1;
 

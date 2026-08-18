@@ -65,8 +65,9 @@ int run_suite(const char *name, ne_test *suite, int argc, char **argv);
 
 /* NEON_TEST_INIT may return either of these to end the run before any
  * test executes, having already written whatever the command line
- * asked for.  run_suite() then returns 0 or 1 respectively without
- * running a test or reporting a parse failure. */
+ * asked for.  run_suite() passes them straight back, so that a caller
+ * running several suites in turn can stop rather than answer the same
+ * command line once per suite; -1 means any other failure to start. */
 #define TEST_INIT_DONE  (-2)    /* --help and friends: exit 0 */
 #define TEST_INIT_USAGE (-3)    /* usage error: exit 1 */
 

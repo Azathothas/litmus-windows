@@ -42,8 +42,6 @@
 
 #include <config.h>
 
-#include <stdio.h>
-
 #include "common.h"
 #include "suites.h"
 
