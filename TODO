@@ -5,7 +5,7 @@ This is a Windows port of litmus (https://github.com/notroj/litmus).
 If you are picking this up cold, read these in order:
 
   1. README.md    what this fork is, how to build it, how to run it
-  2. AGENT.md     how to use litmus to test a WebDAV server, and how to
+  2. AGENTS.md    how to use litmus to test a WebDAV server, and how to
                   read the results; also the JSON schema
   3. PATCHES.md   what was changed inside neon/ and why, needed before
                   you update the bundled neon
@@ -72,6 +72,15 @@ Worth doing, in rough priority order.
   hooks are never attached. Tracing 400,000 lock/unlock round trips
   would not be useful anyway, but writing to one FILE from 20 threads
   would need locking, so this is deliberate. Say so if anyone asks.
+
+* Nothing reports the fork release. The executables have no --version,
+  and ./litmus --version prints the upstream "litmus 0.18", so someone
+  holding a downloaded binary cannot tell which release it came from.
+  Putting the fork version in AC_INIT would fix it and would also show
+  up in the User-Agent, which would help server operators, but it means
+  bumping configure.ac and regenerating win32/config.h for every
+  release, and those two can drift apart. Worth doing properly, with
+  the version in one place that both build paths read.
 
 * CI rebuilds the wsgidav virtualenv on every run. Caching it with
   actions/cache would save about half a minute per job. Low value while

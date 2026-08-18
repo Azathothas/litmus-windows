@@ -92,7 +92,7 @@ jobs:
           path: |
             *.exe
             README.md
-            AGENT.md
+            AGENTS.md
             COPYING
           if-no-files-found: error
 

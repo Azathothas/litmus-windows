@@ -286,7 +286,7 @@ earlier test aborted the suite.
 Running several suites through the `litmus` script with `--json` gives
 one object per suite, one per line, which is JSON Lines.
 
-There is more detail in [AGENT.md](AGENT.md), written for a program
+There is more detail in [AGENTS.md](AGENTS.md), written for a program
 consuming this output rather than a person reading it.
 
 ### Seeing the traffic
@@ -383,8 +383,14 @@ Portability fixes, and one real bug:
    `coll` was left dangling and the failure message printed freed
    memory. The message was different on every run. This is upstream's
    bug and affects Unix too.
+7. `src/basic.c` and `src/lockbomb.c` left their temporary file behind
+   whenever the test that used it failed, because the `ON*` macros
+   return immediately and the cleanup came after them. Both now clean up
+   first and report afterwards. `lockbomb` does this once per thread, so
+   a failing run against 20 threads used to leave 20 files in the temp
+   directory.
 
-Plus `--json` and `--verbose`, described above.
+Plus `--json`, `--trace` and `--verbose`, described above.
 
 The changes inside `neon/` are listed separately in
 [PATCHES.md](PATCHES.md), because anyone updating the bundled neon needs

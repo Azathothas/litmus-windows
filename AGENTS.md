@@ -64,9 +64,14 @@ and `COPYING`. There is no installer and nothing to configure.
 
 Versions: this fork tracks litmus 0.18 and bundles neon 0.37.1. Release
 tags look like `v0.18-win1`, where the suffix counts fork releases
-against the same upstream version. `--help` does not print a version;
-the `litmus` driver script does, with `./litmus --version`, but that
-script is not in the zip because it needs a POSIX shell.
+against the same upstream version.
+
+The executables do not report a version. `./litmus --version` prints
+`litmus 0.18`, which is the upstream version, not the fork release; the
+driver script is also not in the zip, because it needs a POSIX shell. To
+know which fork release you have, keep the tag you downloaded. Every
+request carries `User-Agent: litmus/0.18 neon/0.37.1`, so a server log
+identifies the tool but not the fork release either.
 
 ## Invoking a suite
 

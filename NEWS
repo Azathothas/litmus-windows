@@ -1,3 +1,35 @@
+Changes in the Windows fork (https://github.com/Azathothas/litmus-windows).
+Entries below this section are upstream's.
+
+Changes in version 0.18-win1:
+* Builds and runs on Windows as a native MinGW-w64 program:
+ - temporary files go to $TMPDIR/$TMP/$TEMP instead of /tmp, and
+   lockbomb no longer needs /dev/zero
+ - binary mode is set on native Windows, not just Cygwin, so CRLF
+   translation no longer corrupts PUT/GET byte comparisons
+ - configure copes with test-common being checked out as a plain file
+ - removed a call to ne_set_request_body_provider64, deleted in neon
+   0.27, which only compiled where NE_LFS was off
+* neon 0.37.1 is bundled in the tree rather than being a submodule, so
+  a plain clone builds. See PATCHES.md for the changes made to it.
+* Makefile.w32 builds without autotools; STATIC=1 produces executables
+  that need no MSYS2, OpenSSL or expat DLLs.
+* New options:
+ - --json: one machine-readable object per suite run, with per-test
+   status, duration, failure context and warnings
+ - --trace[=FILE]: dump every request and response, tagged with the
+   test that issued it
+ - --verbose: wider protocol trace, written to stderr
+  Default output is unchanged.
+* Bug fix, not Windows specific:
+ - locks: prep_collection() aliased res and coll to one allocation and
+   unmapped_lock() freed it, so against a server that fails collection
+   locking the failure message printed freed memory
+* tests/wsgidav.sh runs the suites against a local wsgidav on Windows
+  and Unix; make test-httpd still needs a container and Unix.
+* neon/src/Makefile.in gained the distclean target that make distclean
+  had always expected.
+
 Changes in version 0.18:
 * New optional test suites:
  - lockbomb, lockbomb-single: stress tests for locking
