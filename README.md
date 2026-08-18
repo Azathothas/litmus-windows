@@ -32,6 +32,31 @@ Tagged builds are published on the
 `litmus-windows-x86_64.zip`. Those executables are statically linked.
 They need no MSYS2, no OpenSSL DLLs and no expat DLLs. Unzip and run.
 
+With the GitHub CLI:
+
+```bash
+gh release download --repo Azathothas/litmus-windows --pattern "litmus-windows-x86_64.zip" --clobber
+```
+
+From PowerShell, without any extra tooling:
+
+```powershell
+$u = (Invoke-RestMethod https://api.github.com/repos/Azathothas/litmus-windows/releases/latest).assets |
+     Where-Object name -eq 'litmus-windows-x86_64.zip' | Select-Object -First 1 -ExpandProperty browser_download_url
+Invoke-WebRequest $u -OutFile litmus-windows-x86_64.zip
+Expand-Archive litmus-windows-x86_64.zip -DestinationPath litmus -Force
+```
+
+Then:
+
+```bash
+./basic.exe http://dav.example.com/path/
+```
+
+Release tags look like `v0.18-win1`. The `0.18` is the upstream litmus
+version this fork tracks; the suffix counts releases of the fork against
+it. Each release bundles neon 0.37.1.
+
 Everything below is for building it yourself.
 
 ## Building on a fresh Windows machine
