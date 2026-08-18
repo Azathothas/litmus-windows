@@ -13,7 +13,13 @@ To see the current state of the patches:
 git log --oneline -- neon/
 ```
 
-## 1. `src/ne_socket.c`: setsockopt argument type
+Two files hold nearly all of it: `neon/test/common/tests.c` and
+`neon/test/common/tests.h`, the shared test harness litmus builds on.
+The rest are three small portability fixes.
+
+## Portability
+
+### 1. `src/ne_socket.c`: setsockopt argument type
 
 Two `setsockopt` calls passed an `int *` for the option value. POSIX
 declares that parameter `const void *`, so this is fine on Unix, but the
@@ -23,7 +29,25 @@ mismatch as an error rather than a warning, so the build fails.
 Both calls now cast to `const char *`. The affected calls are
 `SO_REUSEADDR` in `do_bind()` and `TCP_NODELAY` in `ne_sock_connect()`.
 
-## 2. `test/common/tests.c`: LC_MESSAGES is not portable
+### 2. `src/ne_defs.h`: symbol visibility on PE
+
+`NE_PRIVATE` was defined as `__attribute__((visibility ("hidden")))` for
+any GCC 3 or later. PE/COFF has no symbol visibility, so GCC ignores the
+attribute and warns about it once per translation unit that uses one —
+eight warnings in a clean build, none of them actionable.
+
+The definition is now skipped on `_WIN32` and `__CYGWIN__`. The
+unconditional `#ifndef NE_PRIVATE / #define NE_PRIVATE` further down the
+same file already supplies the empty fallback, so nothing else changes.
+
+### 3. `src/Makefile.in`: missing distclean target
+
+litmus's own `distclean` runs `cd neon/src && $(MAKE) distclean`, but
+`neon/src/Makefile.in` only defined `clean`, so `make distclean` failed
+at that line. A `distclean` target that removes the generated `Makefile`
+has been added.
+
+### 4. `test/common/tests.c`: LC_MESSAGES is not portable
 
 `setlocale(LC_MESSAGES, "")` was guarded on `HAVE_SETLOCALE` alone.
 `setlocale` does exist on Windows, so the guard passes, but `LC_MESSAGES`
@@ -32,24 +56,90 @@ compilation fails.
 
 The guard is now `#if defined(HAVE_SETLOCALE) && defined(LC_MESSAGES)`.
 
-## 3. `test/common/tests.c`: suite name on Windows
+### 5. `test/common/tests.c`: suite name on Windows
 
-The suite name is derived from `basename(argv[0])`, which only looked for
-a forward slash. On Windows every line of output was prefixed with the
-full path of the executable instead of the suite name.
+The suite name was derived from `basename(argv[0])`, which only looked
+for a forward slash. On Windows every line of output was prefixed with
+the full path of the executable instead of the suite name.
 
-The lookup now also considers a backslash, takes whichever separator
-appears last, and strips a trailing `.exe` so the suite is reported as
-`basic` rather than `basic.exe`.
+The derivation is gone entirely — `run_suite()` takes the name as an
+argument, see below — but if you are porting these changes onto a newer
+neon that still derives it, the lookup has to consider a backslash, take
+whichever separator appears last, and strip a trailing `.exe`.
 
-## 4. `test/common/tests.c` and `tests.h`: JSON and verbose output
+## The harness: several suites in one process
 
-Support for the `--json` and `--verbose` options. This is a feature of
-this fork rather than a portability fix, but it lives in the shared test
-harness because that is where results are formatted and counted.
+Upstream's harness assumes one executable per suite. It has a `main()`,
+it reads the suite name from `argv[0]`, its counters are file-scope
+statics initialised once, and it calls `exit()` from the command-line
+parser. litmus is now a single executable that runs any suite as a
+subcommand, and `litmus-cli all` runs five of them in turn, so all four
+assumptions had to go.
 
-`tests.h` declares three new globals, which the `NEON_TEST_INIT`
-function (litmus's `litmus_init()`) sets while parsing the command line:
+### 6. `run_suite()` replaces `main()`
+
+```c
+int run_suite(const char *name, ne_test *suite, int argc, char **argv);
+```
+
+Same body as upstream's `main()`, with the suite and its name passed in
+rather than being a link-time symbol and `argv[0]`. It returns the
+number of failed tests, or a negative value if the run could not start.
+`neon/test/common/child.c` and the rest of the harness are untouched.
+
+`tests` is declared `ne_test *tests` rather than `ne_test tests[]`, so
+`run_suite()` can point it at whichever array it was given. Each suite
+defines its array under its own name (`basic_tests[]`, `props_tests[]`
+and so on) instead of every one of them defining `tests[]`.
+
+`tests` can also be NULL: the `bench` subcommand sets up a session
+through the same code but runs outside the harness, so anything reading
+`tests[test_num].name` has to cope with that. litmus does it through
+`current_test()` in `src/common.c`.
+
+### 7. `reset_state()`
+
+Every counter, buffer and flag the harness owns is returned to its
+initial value at the top of `run_suite()`: `passes`, `fails`, `skipped`,
+`warnings`, `count`, `quiet`, `warned`, `aborted`, `test_num`,
+`test_name`, `have_context`, `test_context`, `run_started_iso`, and the
+per-test records. Without it the second suite in a process starts with
+the first one's totals.
+
+Anything added at file scope in this file has to be listed there too.
+
+### 8. `close_logs()`
+
+`debug.log` and `child.log` were opened by `main()` and closed at the
+end of it. Closing them now happens on every exit path from
+`run_suite()`, including the early ones, and clears both `FILE *`
+variables and neon's debug stream so the next suite in the same process
+does not inherit a dangling pointer.
+
+### 9. `TEST_INIT_DONE` and `TEST_INIT_USAGE`
+
+Upstream's `NEON_TEST_INIT` function (litmus's `litmus_init()`) called
+`exit()` for `--help` and for a usage error, which kills the whole
+process. It now returns one of two negative sentinels instead:
+
+| Return | Meaning | `run_suite()` returns |
+| --- | --- | --- |
+| `TEST_INIT_DONE` (-2) | the command line was answered in full, e.g. `--help` | 0 |
+| `TEST_INIT_USAGE` (-3) | usage error, message already written | 1 |
+
+Any other non-zero return is still a parse failure and still reports
+`Failed parsing command-line`.
+
+## The harness: JSON and verbose output
+
+### 10. `test/common/tests.c` and `tests.h`: `--json` and `--verbose`
+
+A feature of this fork rather than a portability fix, but it lives in
+the shared harness because that is where results are formatted and
+counted.
+
+`tests.h` declares four globals, which `litmus_init()` sets while
+parsing the command line:
 
 | Global | Effect |
 | --- | --- |
@@ -66,25 +156,42 @@ In `tests.c`:
   `gmtime` and `strftime`. Sub-second digits are truncated rather than
   rounded, so the stamp never names a moment that had not yet occurred.
 * A `struct test_record` array collecting name, status, duration,
-  failure context and any warnings for each test.
+  failure context and any warnings for each test, released by
+  `free_records()` — which `reset_state()` also calls, so a second suite
+  in the same process does not leak the first one's records.
 * `t_warning()` stores the message against the running test in JSON mode
   rather than printing it.
 * Human-readable printing goes through `TPRINT`/`TPUTCHAR` macros that
   are suppressed in JSON mode. The surrounding logic is untouched, so
   the counters and exit status are identical either way.
 
-Default output is unchanged. This was verified by building the harness
-with and without the patch and diffing the output of every suite in both
-default and `--quiet` mode; see the regression note in the README.
+### 11. Three helpers made non-static
 
-## 5. `src/Makefile.in`: missing distclean target
+`test_now_seconds()`, `test_now_iso8601()` and `test_json_string()` were
+static to `tests.c`. They are declared in `tests.h` and exported so that
+`src/bench.c`, which runs outside the harness, emits the same timestamp
+format and the same JSON string escaping rather than a second
+implementation that could drift.
 
-litmus's own `distclean` runs `cd neon/src && $(MAKE) distclean`, but
-`neon/src/Makefile.in` only defined `clean`, so `make distclean` failed
-at that line. A `distclean` target that removes the generated `Makefile`
-has been added.
+## Verifying a change here
 
-## 6. Removed `neon/.github`
+Default text output must stay byte for byte identical. `tests/capture.sh`
+and `tests/compare-captures.sh` exist to prove it:
+
+```bash
+make -f Makefile.w32 && ./tests/capture.sh /tmp/before
+```
+
+then make the change, rebuild, capture to `/tmp/after`, and
+
+```bash
+./tests/compare-captures.sh /tmp/before /tmp/after
+```
+
+Two captures of the same build are byte for byte identical, so any
+difference is the change under test.
+
+## 12. Removed `neon/.github`
 
 The vendored copy brought neon's own CI workflows with it. GitHub only
 reads workflows from the repository root, so they could never run, and

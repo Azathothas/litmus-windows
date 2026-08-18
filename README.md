@@ -1,234 +1,189 @@
 # litmus for Windows
 
-This is a fork of [notroj/litmus](https://github.com/notroj/litmus), the
-WebDAV server compliance test suite. It was made quickly, for one
-reason: to get litmus compiling and running on Windows as a native
-program. Upstream targets Unix and does not build here.
+litmus is a compliance test suite for WebDAV servers, checking them
+against [RFC 4918](https://www.rfc-editor.org/rfc/rfc4918). This is a
+port of [notroj/litmus](https://github.com/notroj/litmus) that builds
+and runs on Windows as a native MinGW-w64 program: no Cygwin runtime, no
+WSL, no MSYS2 needed at run time.
 
-If you are on Linux or macOS, use upstream. Nothing here helps you.
+Everything is one executable, `litmus-cli`, with the suite as a
+subcommand:
 
-What is different from upstream:
+```bash
+litmus-cli basic http://dav.example.com/path/
+```
 
-* It builds on Windows with MinGW-w64, as native `.exe` files. No Cygwin
-  runtime, no WSL.
-* neon is checked into the tree instead of being a submodule, so a plain
-  `git clone` is enough to build.
-* There is a second build path, `Makefile.w32`, that needs only GNU make
-  and a compiler. No autotools.
-* The suites can emit JSON, with `--json`, so a program can read the
-  results.
-* `--trace` dumps every request and response, so you can see exactly
-  what your server was asked and what it answered.
-* `tests/wsgidav.sh` runs the suites against a real WebDAV server on
-  Windows, which is what `make test-httpd` does on Unix.
+Beyond the suites it adds `--json` for machine-readable results,
+`--trace` for a full wire dump, and a `bench` subcommand that measures
+transfer throughput and connect latency.
 
-The test logic is upstream's. This fork does not add or change test
-cases, apart from one bug fix noted at the bottom.
+This suite covers more than litmus 0.18, the version it was forked from.
+The extra test cases are listed under [Test
+coverage](#test-coverage).
 
 ## Getting a binary
 
-Tagged builds are published on the
-[releases page](https://github.com/Azathothas/litmus-windows/releases) as
-`litmus-windows-x86_64.zip`. Those executables are statically linked.
-They need no MSYS2, no OpenSSL DLLs and no expat DLLs. Unzip and run.
-
-With the GitHub CLI:
+Released builds are statically linked x86_64 Windows executables. They
+need no MSYS2, no OpenSSL DLLs and no expat DLLs. Asset names carry no
+version, so these URLs always resolve to the newest release:
 
 ```bash
-gh release download --repo Azathothas/litmus-windows --pattern "litmus-windows-x86_64.zip" --clobber
+curl -fsSL -o litmus-cli.exe https://github.com/Azathothas/litmus-windows/releases/latest/download/litmus-cli.exe
 ```
-
-From PowerShell, without any extra tooling:
 
 ```powershell
-$u = (Invoke-RestMethod https://api.github.com/repos/Azathothas/litmus-windows/releases/latest).assets |
-     Where-Object name -eq 'litmus-windows-x86_64.zip' | Select-Object -First 1 -ExpandProperty browser_download_url
-Invoke-WebRequest $u -OutFile litmus-windows-x86_64.zip
-Expand-Archive litmus-windows-x86_64.zip -DestinationPath litmus -Force
+Invoke-WebRequest https://github.com/Azathothas/litmus-windows/releases/latest/download/litmus-cli.exe -OutFile litmus-cli.exe
 ```
 
-Then:
+The same release also carries `litmus-windows-x86_64.zip`, which holds
+the executable plus `README.md`, `AGENTS.md` and `COPYING`:
 
 ```bash
-./basic.exe http://dav.example.com/path/
+curl -fsSL -o litmus-windows-x86_64.zip https://github.com/Azathothas/litmus-windows/releases/latest/download/litmus-windows-x86_64.zip
 ```
 
-Release tags look like `v0.18-win1`. The `0.18` is the upstream litmus
+Check it runs:
+
+```bash
+./litmus-cli.exe version
+```
+
+Release tags look like `v0.18-win2`. The `0.18` is the upstream litmus
 version this fork tracks; the suffix counts releases of the fork against
-it. Each release bundles neon 0.37.1.
+it. Every release bundles neon 0.37.1.
 
-Everything below is for building it yourself.
+## Building
 
-## Building on a fresh Windows machine
-
-You need MSYS2. Nothing else has to be installed first.
+You need MSYS2, and nothing else installed first.
 
 ### 1. Install MSYS2
 
-Download the installer from <https://www.msys2.org/> and run it, or if
-you have winget:
+Download the installer from <https://www.msys2.org/> and run it, or with
+winget:
 
 ```bash
 winget install MSYS2.MSYS2
 ```
 
-This installs to `C:\msys64` by default.
+The default install location is `C:\msys64`.
 
 ### 2. Install the toolchain
 
-Open the **MSYS2 UCRT64** shortcut from the Start menu. Not the plain
+Open the **MSYS2 UCRT64** shortcut from the Start menu — not the plain
 MSYS2 shell, and not MINGW64. Then:
 
 ```bash
 pacman -S --needed autoconf automake libtool m4 make pkgconf mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-openssl mingw-w64-ucrt-x86_64-expat mingw-w64-ucrt-x86_64-pkgconf
 ```
 
-Say yes when it asks. If pacman tells you to close the terminal and
-reopen it, do that and run the command again.
+If pacman asks you to close the terminal and reopen it, do that and run
+the command again.
 
 ### 3. Clone
 
 ```bash
 git clone https://github.com/Azathothas/litmus-windows
-cd litmus-windows
 ```
 
-There is no `--recurse-submodules` step. neon is already in the tree.
+There is no `--recurse-submodules` step. neon is checked into the tree.
 
 ### 4. Build
+
+Two build paths produce the same executable. Autotools:
 
 ```bash
 ./autogen.sh && ./configure --with-ssl=openssl && make
 ```
 
-You get `basic.exe`, `copymove.exe`, `props.exe`, `locks.exe`,
-`http.exe`, `largefile.exe`, `protected.exe`, `lockbomb.exe`,
-`lockbomb-single.exe`, and a shell script called `litmus`.
+That gives `litmus-cli.exe` and a shell script called `litmus` that runs
+the standard suites in turn. You do not need `--with-included-neon`;
+there is no system neon on Windows to prefer, so the bundled copy is
+used regardless.
 
-You do not need `--with-included-neon`. There is no system neon on
-Windows to prefer, so the bundled copy is used anyway. Passing the flag
-does no harm.
-
-## Building without autotools
-
-`Makefile.w32` builds the same executables using a configuration that is
-checked in at `win32/config.h`. It needs GNU make and a MinGW-w64
-compiler whose sysroot has OpenSSL and expat. A UCRT64 shell has both.
+Or without autotools, using the configuration checked in at
+`win32/config.h`:
 
 ```bash
 make -f Makefile.w32
 ```
 
-This is faster and has fewer moving parts. Use it if `configure` is
-giving you trouble, or if you do not want to install autoconf.
+This needs only GNU make and a MinGW-w64 compiler whose sysroot has
+OpenSSL and expat, which a UCRT64 shell already has. It is faster and
+has fewer moving parts.
 
-To build executables that run on a machine with no MSYS2 installed:
+To build an executable that runs on a machine with no MSYS2:
 
 ```bash
 make -f Makefile.w32 STATIC=1
 ```
 
-That links OpenSSL and expat in statically. The binaries get large,
-around 7.9 MiB each, and depend only on DLLs that ship with Windows.
+That links OpenSSL and expat in statically. The result is 8595548 bytes
+(8.2 MiB) against 1392028 bytes (1.3 MiB) dynamically linked, and
+depends only on DLLs that ship with Windows. This is how the released
+binaries are built.
 
-### If OpenSSL and expat are somewhere else
-
-Set `PREFIX` to a sysroot that provides both:
+If OpenSSL and expat live outside the toolchain, point `PREFIX` at a
+sysroot providing both:
 
 ```bash
 make -f Makefile.w32 PREFIX=/some/sysroot
 ```
 
-`PREFIX` must belong to the same toolchain as the compiler. Pointing a
+`PREFIX` must belong to the same toolchain as the compiler. Aiming a
 standalone MinGW-w64 at MSYS2's `lib` directory pulls in MSYS2's C
-runtime as well, and the link dies on `_gnu_exception_handler` and
-`__mingw_oldexcpt_handler`. If you see those symbols, this is why.
+runtime as well, and the link fails on `_gnu_exception_handler` and
+`__mingw_oldexcpt_handler`.
 
-## Running it against your server
-
-Each suite is a separate program that takes a URL:
+## Running it
 
 ```bash
-./basic.exe http://dav.example.com/path/
+litmus-cli COMMAND [OPTIONS] URL [username password]
 ```
-
-Add a username and password if the server wants them:
 
 ```bash
-./basic.exe http://dav.example.com/path/ jim 2518
+litmus-cli basic http://dav.example.com/path/
+litmus-cli locks --json http://dav.example.com/path/
+litmus-cli all http://dav.example.com/path/ jim 2518
 ```
 
-The URL must be a collection that already exists, and litmus must be
-able to create a collection called `litmus` inside it. If that MKCOL
-fails you get a 409 and every test aborts at `begin`.
+`litmus-cli list` prints the suites; `litmus-cli COMMAND --help` prints
+the options a command takes.
 
-To run the standard set in one go:
+| Command | What it does |
+| --- | --- |
+| `basic` | `PUT`, `GET`, `DELETE` and `MKCOL` on plain resources and collections |
+| `copymove` | `COPY` and `MOVE`, for resources and for collections |
+| `props` | property handling: `PROPFIND` and `PROPPATCH` |
+| `locks` | `LOCK` and `UNLOCK`, including collection and conditional requests |
+| `http` | HTTP-level behaviour, currently `Expect: 100-continue` |
+| `largefile` | a 2147549184 byte (2.0 GiB) `PUT` followed by a `GET` |
+| `protected` | every method must be refused on a protected metadata collection |
+| `lockbomb` | lock/unlock stress, 20 worker threads by default |
+| `lockbomb-single` | lock/unlock stress in one thread |
+| `all` | runs `basic`, `copymove`, `props`, `locks` and `http` in that order |
+| `bench` | throughput and connect-latency measurement, not a compliance test |
+| `list` | the suites, one name and summary per line |
+| `version` | the fork version and the bundled neon build |
 
-```bash
-make URL=http://dav.example.com/path/ check
-```
+The URL must be a collection that already exists and ends in a slash.
+litmus creates a collection called `litmus` inside it and does not
+reliably remove it afterwards, so use a fresh directory per run: a
+leftover `litmus` collection makes `MKCOL` return 405 and every suite
+aborts at `begin`.
 
-or, after `make install`, the `litmus` script:
+The exit status is the number of failed tests, capped at 125 so it
+cannot collide with the range a shell uses for signalled exits.
+
+After `make install` there is also a `litmus` shell script, which runs
+the standard suites in turn and takes the same options:
 
 ```bash
 ./litmus http://dav.example.com/path/ jim 2518
 ```
 
-Both of those are shell scripts. They run in an MSYS2 or Git Bash shell.
-They do not run in cmd.exe or PowerShell. The suite executables
-themselves are native Windows programs and run anywhere.
-
-## Running it against a local server
-
-`tests/wsgidav.sh` sets up a WebDAV server and runs the suites against
-it. Use it to check that a build works.
-
-```bash
-./tests/wsgidav.sh
-```
-
-On the first run it creates a virtualenv in `dav-venv` and installs
-[wsgidav](https://github.com/mar10/wsgidav) into it. That needs Python
-and network access. Later runs reuse the virtualenv. Server data goes in
-`davroot`. Both directories are gitignored.
-
-It needs a **native Windows Python**, from
-<https://www.python.org/downloads/> or the Microsoft Store. An MSYS2
-shell has a minimal `PATH` that leaves out the Windows one, so the
-script also looks in the usual install locations and normally finds it
-without help. If it does not, say where it is:
-
-```bash
-PYTHON=/c/Python313/python.exe ./tests/wsgidav.sh
-```
-
-Do not install MSYS2's own `python` package for this. It works fine as a
-Python, but wsgidav depends on `bcrypt`, which has no mingw wheel and
-tries to build from source, which needs a Rust toolchain. The script
-detects an MSYS2 python and skips over it rather than failing halfway
-through a pip install.
-
-To check the results against known-good numbers instead of just printing
-them:
-
-```bash
-./tests/wsgidav.sh --check
-```
-
-That runs every suite with `--json` and compares the totals against
-`tests/expected-wsgidav.txt`. It exits non-zero if anything moved. This
-is what CI runs.
-
-wsgidav is not fully RFC 4918 compliant, so two suites do not reach
-100%. `copymove/copy_shallow` fails because wsgidav copies a collection
-recursively when the request said `Depth: 0`. Four tests in `locks` fail
-because wsgidav's `LOCK` response leaves out the `activelock` element,
-so litmus never gets a lock token. Those are server bugs, not litmus
-bugs, and the expected-results file records them as expected.
-
-There is also `make test-httpd`, which runs the suites against Apache
-httpd in a container. It is upstream's, it needs podman or docker, and
-it does not work on Windows. It is kept for the Unix build.
+`make URL=http://dav.example.com/path/ check` does the same from the
+build tree. Both are shell scripts and need an MSYS2 or Git Bash shell;
+`litmus-cli all` does the same job from any shell.
 
 ## Options
 
@@ -245,22 +200,43 @@ it does not work on Windows. It is kept for the Unix build.
  -v, --verbose              write the protocol trace to stderr
  -t, --trace[=FILE]         dump every request and response to FILE
                             (default stderr; use - for stdout)
+     --threads=N            number of worker threads (lockbomb only)
+     --connect-timeout=SEC  connection timeout
+     --read-timeout=SEC     response timeout
+     --no-keepalive         one connection per request
+
+bench only:
+     --files=N              small files to transfer
+     --size=BYTES           size of each small file
+     --large=BYTES          size of the large file, 0 to skip it
+     --concurrency=N        transfers in flight at once
+     --pings=N              TCP connect probes, 0 to skip them
 ```
 
-`--json`, `--verbose` and `--trace` are new in this fork. Everything
-else is upstream's and behaves the same.
+`--json`, `--verbose`, `--trace`, `--threads`, `--connect-timeout`,
+`--read-timeout` and `--no-keepalive` are additions in this fork.
 
-Default output is byte for byte identical to upstream's. If you have a
-script that parses it, it keeps working.
+Environment variables the harness reads:
 
-### JSON output
+| Variable | Effect |
+| --- | --- |
+| `TEST_COLOUR` | `0` disables colour, `1` forces it |
+| `TEST_QUIET` | `1` selects the compact one-line-per-suite format |
+| `TEST_NODEBUG` | set to anything to stop `debug.log` and `child.log` being written |
+| `TEST_PROTECTED` | collection name the `protected` suite checks; default `.DAV` |
+
+Default text output is byte for byte identical to upstream's, so a
+script that parses it keeps working.
+
+## Output
+
+### JSON
 
 ```bash
-./basic.exe --json http://dav.example.com/path/
+litmus-cli copymove --json http://dav.example.com/path/
 ```
 
-One object on stdout, nothing else, so you can pipe it straight into a
-parser. The exit status is the number of failed tests, same as always.
+One object on stdout and nothing else:
 
 ```json
 {
@@ -269,49 +245,45 @@ parser. The exit status is the number of failed tests, same as always.
   "started": "2026-08-18T13:04:54.429Z",
   "duration": 5.790,
   "tests": [
-    {"name": "begin", "status": "pass", "duration": 0.061},
+    {"name": "copy_simple", "status": "pass", "duration": 0.061},
     {"name": "copy_shallow", "status": "fail", "duration": 0.376,
      "context": "DELETE on `/litmus/ccdest/foo' should fail with 404: got 204"}
   ],
-  "summary": {"total": 13, "passed": 12, "failed": 1,
+  "summary": {"total": 15, "passed": 14, "failed": 1,
               "skipped": 0, "notrun": 0, "warnings": 0}
 }
 ```
 
 `status` is one of `pass`, `fail`, `fatal`, `skip`, `xfail`, `notrun` or
-`oops`. `context` is the failure message, and is absent when the test
-did not set one. A `warnings` array appears on a test that issued
-warnings. `notrun` counts tests that were never reached because an
-earlier test aborted the suite.
+`oops`. `context` is the failure message and is absent when the test set
+none. A `warnings` array appears on a test that issued warnings.
+`notrun` counts tests never reached because an earlier test aborted the
+suite.
 
 `started` is ISO 8601 in UTC with millisecond precision, always ending
-in `Z`. Durations are seconds to millisecond resolution, and are
-wall-clock, so they include server and network time.
+in `Z`, truncated rather than rounded. Durations are seconds to
+millisecond resolution and are wall-clock, so they include server and
+network time.
 
-Running several suites through the `litmus` script with `--json` gives
-one object per suite, one per line, which is JSON Lines.
+`litmus-cli all --json` and the `litmus` script with `--json` give one
+object per suite, one per line, which is JSON Lines.
 
-There is more detail in [AGENTS.md](AGENTS.md), written for a program
-consuming this output rather than a person reading it.
+[AGENTS.md](AGENTS.md) documents the schema in full, written for a
+program consuming the output rather than a person reading it.
 
-### Seeing the traffic
+### Wire trace
 
-`--trace` dumps every request and response. This is the useful one when
-you are writing a server and want to know what litmus actually asked
-for.
+`--trace` dumps every request and response, introduced by the suite,
+test number and test name that issued it:
 
 ```bash
-./props.exe --trace=wire.log http://127.0.0.1:8080/dav/
+litmus-cli props --trace=wire.log http://127.0.0.1:8080/dav/
 ```
-
-With no filename it writes to stderr. Use `-` for stdout. Each request
-is introduced by the suite, test number and test name that issued it,
-so you can find the exact exchange behind a failure:
 
 ```
 --- basic 2 (put_get) ---
 > PUT /dav/litmus/res HTTP/1.1
-> User-Agent: litmus/0.18 neon/0.37.1
+> User-Agent: litmus/0.18-win2 neon/0.37.1
 > Host: 127.0.0.1:8080
 > Content-Length: 41
 > X-Litmus: basic: 2 (put_get)
@@ -326,105 +298,219 @@ a test file.
 ```
 
 Sent lines are prefixed `>`, received lines `<`. Message bodies are
-printed inside square brackets rather than prefixed, because PROPFIND
-and LOCK bodies are XML and nearly every line of those starts with `<`.
+printed inside square brackets rather than prefixed, because `PROPFIND`
+and `LOCK` bodies are XML and nearly every line of those starts with
+`<`.
 
-`--verbose` widens the trace to everything neon can report, including
-socket, XML parser and authentication detail. On its own it writes to
-stderr. Combined with `--trace` it writes the wider trace to the trace
-destination, so `--trace=wire.log --verbose` puts everything in one
-file. Without either flag the same detail is appended to `debug.log`.
+With no filename the trace goes to stderr; `-` sends it to stdout.
+`--verbose` widens it to everything neon can report, including socket,
+XML parser and authentication detail, and on its own writes to stderr.
+Combined with `--trace` the wider trace goes to the trace destination,
+so `--trace=wire.log --verbose` puts everything in one file. With
+neither flag the same detail is appended to `debug.log`.
 
-The flags compose, and stdout is only ever used for results:
+stdout carries results only, so the flags compose:
 
 ```bash
-./locks.exe --json --trace=wire.log http://127.0.0.1:8080/dav/ > result.json
+litmus-cli locks --json --trace=wire.log http://127.0.0.1:8080/dav/ > result.json
 ```
 
-## Things that will trip you up
+`--trace` does not cover the `lockbomb` worker threads or the `bench`
+transfers. Those create their own sessions, deliberately: writing to one
+stream from twenty threads would need locking, a trace of 400000
+lock/unlock round trips is not useful, and dumping the benchmark's
+bodies would dominate the measurement.
 
-**Leftover collections.** litmus creates a collection called `litmus`
-under the URL you give it, and does not always clean it up. If a
-previous run left one behind, `MKCOL` returns 405 and every suite aborts
-at `begin`. Use a fresh directory per run.
+## Benchmarking
+
+`bench` is not a compliance test. It measures how fast a server moves
+bytes and how quickly it accepts connections.
+
+```bash
+litmus-cli bench http://dav.example.com/path/
+```
+
+```
+-> benchmarking `http://127.0.0.1:8931/b/':
+   started      2026-08-18T15:10:19.259Z
+   concurrency  8 parallel transfers
+   payload      4194304 bytes (4.0 MiB) of incompressible pseudo-random data,
+                streamed from a rotating offset
+   keep-alive   on, connect timeout neon default, read timeout neon default
+
+   upload-small       16 files 1048576 bytes (1.0 MiB)           0.007 s   140.04 MiB/s  0 errors
+   download-small     16 files 1048576 bytes (1.0 MiB)           0.086 s    11.67 MiB/s  0 errors
+   upload-large        1 file  8388608 bytes (8.0 MiB)           0.009 s   909.83 MiB/s  0 errors
+   download-large      1 file  8388608 bytes (8.0 MiB)           0.014 s   572.08 MiB/s  0 errors
+
+   latency      20 TCP connects to 127.0.0.1 port 8931
+                min 0.309 ms  mean 0.346 ms  max 0.401 ms  jitter 0.020 ms  loss 0/20
+
+<- benchmark of `http://127.0.0.1:8931/b/' took 1.312 s wall-clock, which includes server and network time.
+```
+
+Four transfer scenarios and a TCP-connect probe. The payload is 4194304
+bytes (4.0 MiB) of xorshift64\* output, filled once and streamed from a
+rotating offset so the server cannot benefit from compressing or
+deduplicating it. Concurrency is bounded by a pool of exactly
+`--concurrency` worker threads. Rates are MiB/s, latencies milliseconds.
+
+`--json` gives the same figures as one object, with a `scenarios` array
+and a `latency` object; the connection settings are reported alongside
+because two runs made with different ones are not comparable.
+
+neon 0.37.1 speaks HTTP/1.1 only, so there is no way to pin the protocol
+version for a server that behaves differently over HTTP/2. That would
+need a different HTTP client.
+
+## Test coverage
+
+| Suite | Tests |
+| --- | --- |
+| `basic` | 17 |
+| `copymove` | 15 |
+| `props` | 33 |
+| `locks` | 43 |
+| `http` | 4 |
+| `largefile` | 5 |
+| `protected` | 30 |
+| `lockbomb`, `lockbomb-single` | 3 each |
+
+Counts include the `begin` and `finish` tests, which every suite runs.
+`locks` defines 43 tests but many are conditional: a server that does
+not advertise DAV class 2 makes `precond` return `SKIPREST`, and the
+rest of the suite is skipped.
+
+Beyond litmus 0.18 this fork tests:
+
+* `basic/mkcol_percent_20` — a collection whose name contains an escaped
+  space, created, listed and removed.
+* `basic/mkcol_again` — a second `MKCOL` on an existing collection must
+  be refused.
+* `copymove/copy_content`, `copymove/move_content` — the body at the
+  destination is compared byte for byte with the source, so a `COPY` or
+  `MOVE` that reports success while writing the wrong bytes is caught.
+* `locks/locknull`, `locks/locknull_discover`, `locks/locknull_unlock` —
+  RFC 4918 section 7.3 treatment of a `LOCK` on an unmapped URL: the
+  resulting lock-null resource must appear in a `PROPFIND` of its parent
+  and must disappear when the lock is released.
+
+It also warns rather than staying silent when `MKCOL` answers with
+something other than 201, or `DELETE` with something other than 204, and
+`PROPPATCH` results are read from inside a 207 multistatus, so a server
+that refuses a `PROPPATCH` with 207 wrapping a 423 is judged on the 423.
+
+## Testing against a local server
+
+Two harnesses run the suites against a real server. Neither server is
+complete on its own, and the difference matters.
+
+```bash
+./tests/wsgidav.sh
+```
+
+[wsgidav](https://github.com/mar10/wsgidav) is pure Python and runs
+natively on Windows. On the first run the script creates a virtualenv in
+`dav-venv` and installs wsgidav into it, which needs a **native Windows
+Python** from <https://www.python.org/downloads/> or the Microsoft Store
+and network access. Later runs reuse it. Server data goes in `davroot`.
+Both directories are gitignored.
+
+An MSYS2 shell has a minimal `PATH` that leaves out the Windows one, so
+the script looks in the usual install locations as well and normally
+finds Python without help. If it does not, say where it is:
+
+```bash
+PYTHON=/c/Python313/python.exe ./tests/wsgidav.sh
+```
+
+Do not install MSYS2's own `python` package for this: wsgidav depends on
+`bcrypt`, which has no mingw wheel and needs a Rust toolchain to build
+from source. The script detects an MSYS2 python and skips over it.
+
+To compare against known-good numbers rather than just printing them:
+
+```bash
+./tests/wsgidav.sh --check
+```
+
+That runs every suite with `--json` and compares the totals against
+`tests/expected-wsgidav.txt`, exiting non-zero if anything moved. This
+is the gate CI runs, and it must print `All suites match the expected
+results` before and after any change.
+
+wsgidav 4.3.5 is not fully RFC 4918 compliant, and the expected results
+record where:
+
+* `copymove/copy_shallow` fails because wsgidav copies a collection
+  recursively when the request said `Depth: 0`.
+* Four tests in `locks` fail, and 31 are skipped, because wsgidav
+  answers `LOCK` with the `Content-Type` `application; charset=utf-8`,
+  which is not a media type. neon discards the body unparsed, so litmus
+  never sees the lock token and everything downstream of holding a lock
+  is skipped. **No change to the lock tests is visible against wsgidav.**
+
+```bash
+./tests/godav.sh
+```
+
+runs the same suites against `golang.org/x/net/webdav` instead, from the
+Go source in `tests/godav`. It locks correctly, including the RFC 4918
+section 7.3 treatment of a `LOCK` on an unmapped URL, but has no dead
+property store, so four `props` tests fail there. Verify lock work
+against `godav.sh` and property work against `wsgidav.sh`.
+
+Two more scripts support changes to the shared harness:
+
+* `tests/capture.sh OUTDIR` captures every suite in default, `--quiet`
+  and `--json` form against one wsgidav server, plus the
+  connection-refused path for every suite.
+* `tests/compare-captures.sh BEFORE AFTER` diffs two such directories
+  with the wall-clock JSON fields normalised.
+
+Two captures of the same build are byte for byte identical, so any
+difference is the change under test:
+
+```bash
+make -f Makefile.w32 && ./tests/capture.sh /tmp/before
+```
+
+`tests/hyperfine.sh` times litmus itself rather than the server, using
+[hyperfine](https://github.com/sharkdp/hyperfine) and the Go server.
+
+`make test-httpd` runs the suites against Apache httpd in a container.
+It needs podman or docker and does not work on Windows; it is kept for
+the Unix build.
+
+## Windows notes
 
 **The wrong DLLs.** Git Bash ships its own `libssl`, `libcrypto` and
 `libexpat` in `/mingw64/bin`. If those come first on `PATH` they shadow
-the ones a dynamically linked build was built against, and you get
-confusing failures. Put `ucrt64/bin` first, or build with `STATIC=1`.
+the ones a dynamically linked build was built against. Put `ucrt64/bin`
+first, or build with `STATIC=1`.
 
 **`win32/config.h` is generated.** It is the output of `configure`,
-checked in so that `Makefile.w32` works without autotools. If you change
-`configure.ac` or update neon, regenerate it: run `configure` as above
-and copy the resulting `config.h` over `win32/config.h`.
+checked in so `Makefile.w32` works without autotools. If you change
+`configure.ac` or update neon, re-run `configure` and copy the resulting
+`config.h` over `win32/config.h`.
+
+**`VERSION`.** The fork version lives in one file at the top of the
+tree, read by `Makefile.w32` and by `configure.ac`, and reaches the code
+as `-DLITMUS_VERSION`. Bumping it means regenerating `win32/config.h` as
+above.
 
 **IPv6.** `configure` does not define `USE_GETADDRINFO` on MinGW, so
-neon falls back to the older resolver. IPv4 works. IPv6 may not.
+neon falls back to the older resolver. IPv4 works; IPv6 may not.
 
-**`make distclean`** was broken upstream, because `neon/src/Makefile.in`
-had no `distclean` target. It is fixed here.
+**`test-common`** is a symlink in git, which Windows checks out as a
+small text file. `configure` detects that and uses the real directory.
 
-## What was changed
+## Differences from the upstream source
 
-Portability fixes, and one real bug:
-
-1. `src/basic.c` wrote temporary files to `/tmp`, which does not exist on
-   Windows. There is now a `litmus_tmpfile()` helper in `src/common.c`
-   that uses `$TMPDIR`, `$TMP` or `$TEMP`.
-2. `src/lockbomb.c` read from `/dev/zero`. Same helper.
-3. Binary mode was only set on Cygwin. Native Windows needs it too, or
-   CRLF translation corrupts every PUT and GET byte comparison.
-4. `test-common` is a symlink in git. Windows checks it out as a small
-   text file, so the build could not find `tests.c`. `configure` now
-   detects that and uses the real directory.
-5. `src/largefile.c` called `ne_set_request_body_provider64`, which was
-   removed in neon 0.27. It never compiled on any platform that enables
-   `NE_LFS`, which on 64-bit Linux is none of them, which is why nobody
-   noticed.
-6. `src/locks.c` had a use after free. `prep_collection()` pointed `res`
-   and `coll` at the same allocation, and `unmapped_lock()` freed `res`.
-   If `lock_collection()` failed before it reassigned `res`, which is
-   what happens against any server that fails collection locking, then
-   `coll` was left dangling and the failure message printed freed
-   memory. The message was different on every run. This is upstream's
-   bug and affects Unix too.
-7. `src/basic.c` and `src/lockbomb.c` left their temporary file behind
-   whenever the test that used it failed, because the `ON*` macros
-   return immediately and the cleanup came after them. Both now clean up
-   first and report afterwards. `lockbomb` does this once per thread, so
-   a failing run against 20 threads used to leave 20 files in the temp
-   directory.
-
-Plus `--json`, `--trace` and `--verbose`, described above.
-
-The changes inside `neon/` are listed separately in
-[PATCHES.md](PATCHES.md), because anyone updating the bundled neon needs
-to reapply them.
-
-## What was not changed
-
-[Upstream issue 8](https://github.com/notroj/litmus/issues/8) asks for
-the extra test cases from the [tolsen fork](https://github.com/tolsen/litmus)
-to be merged. They are not in this fork, deliberately.
-
-That fork is a 2008 SVN conversion with no history in common with
-upstream, so there is nothing to merge against. The nearest usable
-comparison is
-[skissane's branch](https://github.com/notroj/litmus/compare/master...skissane:litmus:tolsen-merge),
-which is 1643 added lines across `basic.c`, `copymove.c`, `locks.c` and
-`props.c`, and is now 74 commits behind master. The person who led the
-team that wrote those tests
-[says himself](https://github.com/notroj/litmus/issues/8#issuecomment-1595709446)
-that they should not be treated as a gold standard and need review by
-someone with deep WebDAV knowledge. Upstream's maintainer is open to
-them but wants them split into reviewable pieces first.
-
-None of that is Windows portability work, and taking 1643 lines of
-unreviewed test changes into this fork would change the expected results
-in a way that makes real regressions hard to spot. If those tests are
-worth having they should go upstream, reviewed, not sideways into a
-port. This fork tracks upstream's test logic so results from it stay
-comparable with results from upstream.
+The Windows portability work, the neon patches and the fork's own
+additions are recorded in [NEWS](NEWS). The changes inside `neon/` are
+listed separately in [PATCHES.md](PATCHES.md), because anyone updating
+the bundled neon has to reapply them.
 
 ## Licensing
 
@@ -442,6 +528,5 @@ The bundled neon library is under the GNU Library GPL. See
 neon is Copyright (C) 1999-2025 Joe Orton
 ```
 
-All the hard work here is Joe Orton's. This fork only makes it compile
-on Windows. Report anything that is not Windows specific to
+Report anything that is not Windows specific to
 [upstream](https://github.com/notroj/litmus/issues).

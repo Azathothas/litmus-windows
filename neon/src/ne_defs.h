@@ -59,7 +59,12 @@ typedef off_t ne_off_t;
 #ifdef __GNUC__
 #if __GNUC__ >= 3
 #ifndef NE_PRIVATE
+/* PE/COFF has no symbol visibility, so GCC ignores the attribute and
+ * warns once per translation unit that uses it.  Leave NE_PRIVATE
+ * undefined there; the unconditional fallback below supplies it. */
+#if !defined(_WIN32) && !defined(__CYGWIN__)
 #define NE_PRIVATE __attribute__((visibility ("hidden")))
+#endif
 #endif
 #define ne_attribute_malloc __attribute__((malloc))
 #define ne_attribute_alloc_size(x) __attribute__((alloc_size(x)))

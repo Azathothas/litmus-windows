@@ -1,6 +1,49 @@
 Changes in the Windows fork (https://github.com/Azathothas/litmus-windows).
 Entries below this section are upstream's.
 
+Changes in version 0.18-win2:
+* One executable. The nine suite programs are replaced by litmus-cli,
+  which takes the suite as a subcommand, plus the commands `all',
+  `list', `bench' and `version'. lockbomb-single survives as a
+  subcommand that is lockbomb with a default of one thread; --threads
+  overrides either. A release is now one statically linked binary
+  rather than nine copies of the same OpenSSL, expat and neon.
+* New tests:
+ - basic/mkcol_percent_20: a collection whose name contains an escaped
+   space, created, listed and removed
+ - basic/mkcol_again: a second MKCOL on an existing collection must be
+   refused
+ - copymove/copy_content, copymove/move_content: the body at the
+   destination is compared byte for byte with the source
+ - locks/locknull, locks/locknull_discover, locks/locknull_unlock:
+   RFC 4918 section 7.3 treatment of a LOCK on an unmapped URL, and the
+   lock-null resource that creates
+* MKCOL answering with something other than 201, and DELETE with
+  something other than 204, now warn instead of passing silently.
+* PROPPATCH results are read from inside a 207 multistatus, through the
+  new litmus_proppatch(), so a server that refuses a PROPPATCH with 207
+  wrapping a 423 is judged on the 423 rather than on the wrapper.
+* New `bench' subcommand: four transfer scenarios and a TCP-connect
+  latency probe, in text or --json form. The payload is 4194304 bytes
+  (4.0 MiB) of xorshift64* output, filled once and streamed from a
+  rotating offset; concurrency is bounded by a pool of exactly
+  --concurrency worker threads. Rates are MiB/s. It is a measurement,
+  not a compliance test, and passes or fails nothing.
+* New options, applying to every subcommand: --connect-timeout,
+  --read-timeout, --no-keepalive, and --threads for lockbomb.
+* The fork version lives in one file, VERSION, read by both build
+  paths and reported by `litmus-cli version' and in the User-Agent.
+* tests/godav.sh runs the suites against golang.org/x/net/webdav as a
+  second opinion, because wsgidav cannot exercise the lock tests at
+  all: it answers LOCK with the Content-Type "application; charset=utf-8",
+  which is not a media type, so neon discards the body and litmus never
+  sees a lock token. tests/capture.sh and tests/compare-captures.sh
+  prove that a change leaves the default text output byte for byte
+  identical; tests/hyperfine.sh times litmus rather than the server.
+* neon's NE_PRIVATE no longer applies a visibility attribute on PE
+  targets, where GCC ignores it and warns. Both build paths are now
+  warning-free. See PATCHES.md.
+
 Changes in version 0.18-win1:
 * Builds and runs on Windows as a native MinGW-w64 program:
  - temporary files go to $TMPDIR/$TMP/$TEMP instead of /tmp, and
