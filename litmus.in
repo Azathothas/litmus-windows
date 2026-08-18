@@ -27,6 +27,9 @@ Options:
  -v, --verbose              write the protocol trace to stderr
  -t, --trace[=FILE]         dump every request and response to FILE
                             (default stderr; use - for stdout)
+     --connect-timeout=SEC  connection timeout
+     --read-timeout=SEC     response timeout
+     --no-keepalive         one connection per request
 
 Significant environment variables:
 

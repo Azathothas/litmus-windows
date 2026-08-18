@@ -7,7 +7,9 @@ Changes in version 0.18-win2:
   `list', `bench' and `version'. lockbomb-single survives as a
   subcommand that is lockbomb with a default of one thread; --threads
   overrides either. A release is now one statically linked binary
-  rather than nine copies of the same OpenSSL, expat and neon.
+  rather than nine copies of the same OpenSSL, expat and neon: the
+  published zip drops from 27246542 bytes (26.0 MiB) to 3164300 bytes
+  (3.0 MiB).
 * New tests:
  - basic/mkcol_percent_20: a collection whose name contains an escaped
    space, created, listed and removed

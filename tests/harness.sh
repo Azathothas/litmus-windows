@@ -127,11 +127,12 @@ fi
 # JSON.  A real parser is the independent check, and the escaping test
 # in the synthetic suite is what makes it worth running.  Optional,
 # because the point of this script is that it needs nothing installed.
-if [ $REGEN -eq 0 ]; then
-    # shellcheck source=tests/python.sh
-    . tests/python.sh
-    if [ -n "${PYTHON-}" ]; then
-        if "$PYTHON" - "$WORK/json.raw" <<'PY'
+#
+# Only reached when not regenerating; that path has already exited.
+# shellcheck source=tests/python.sh
+. tests/python.sh
+if [ -n "${PYTHON-}" ]; then
+    if "$PYTHON" - "$WORK/json.raw" <<'PY'
 import json, sys
 
 with open(sys.argv[1], encoding="utf-8") as fh:
@@ -145,14 +146,13 @@ for n, line in enumerate(lines, 1):
 
 print("  json parses (%d objects)" % len(lines))
 PY
-        then :
-        else
-            echo "  the JSON output does not parse" >&2
-            rc=1
-        fi
+    then :
     else
-        echo "  json parse check skipped: no Python found"
+        echo "  the JSON output does not parse" >&2
+        rc=1
     fi
+else
+    echo "  json parse check skipped: no Python found"
 fi
 
 if [ $rc -eq 0 ]; then

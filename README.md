@@ -117,10 +117,13 @@ To build an executable that runs on a machine with no MSYS2:
 make -f Makefile.w32 STATIC=1
 ```
 
-That links OpenSSL and expat in statically. The result is 8610579 bytes
-(8.2 MiB) against 1407059 bytes (1.3 MiB) dynamically linked, and
-depends only on DLLs that ship with Windows. This is how the released
-binaries are built.
+That links OpenSSL and expat in statically, so the result depends only
+on DLLs that ship with Windows. This is how the released binaries are
+built. It is correspondingly larger: 8610579 bytes (8.2 MiB) against
+1407059 bytes (1.3 MiB) dynamically linked, measured against OpenSSL
+3.6.3 and expat 2.8.1. Expect a different exact figure from a different
+toolchain — the published 0.18-win2 binary, built against expat 2.8.3,
+is 8593710 bytes.
 
 If OpenSSL and expat live outside the toolchain, point `PREFIX` at a
 sysroot providing both:

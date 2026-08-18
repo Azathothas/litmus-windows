@@ -36,9 +36,9 @@ curl -fsSL -o litmus-cli.exe https://github.com/Azathothas/litmus-windows/releas
 Invoke-WebRequest https://github.com/Azathothas/litmus-windows/releases/latest/download/litmus-cli.exe -OutFile litmus-cli.exe
 ```
 
-It is a statically linked x86_64 Windows executable, 8610579 bytes
-(8.2 MiB). It needs no MSYS2, no OpenSSL DLLs and no expat DLLs. There
-is no installer and nothing to configure:
+It is a statically linked x86_64 Windows executable, 8593710 bytes
+(8.2 MiB) in the 0.18-win2 release. It needs no MSYS2, no OpenSSL DLLs
+and no expat DLLs. There is no installer and nothing to configure:
 
 ```bash
 ./litmus-cli.exe version
@@ -422,8 +422,11 @@ one. It is the check. Work out what state it was verifying.
 
 ```json
 {"name": "lock_excl", "status": "fail",
- "context": "LOCK on `/dav/litmus/lockme': Response missing activelock for (null)"}
+ "context": "LOCK on `/dav/litmus/lockme': Response missing activelock for (null)",
+ "error": {"op": "LOCK", "path": "/dav/litmus/lockme", "status": 200}}
 ```
+
+Note the status: 200. The server thought it had succeeded.
 
 wsgidav accepted the `LOCK` and returned success, but labelled the
 response `Content-Type: application; charset=utf-8`. That is not a media
